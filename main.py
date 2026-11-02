@@ -110,33 +110,24 @@ def fetch_garmin_data_safe():
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 6. Stažení Stresu přes denní reporty (stejná struktura jako Body Battery)
+                # 6. Test nového endpointu pro stres (stressSummary)
                 try:
-                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/stress/reports/daily?startDate={today_str}&endDate={today_str}"
+                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/stressSummary?date={today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
                     debug_log.append(f"Stress API Status: {stress_res.status_code}")
                     if stress_res.status_code == 200:
                         stress_json = stress_res.json()
-                        items = stress_json if isinstance(stress_json, list) else [stress_json]
-                        for item in items:
-                            if isinstance(item, dict):
-                                avg = item.get("overallStressLevel") or item.get("avgStressLevel")
-                                if avg is not None:
-                                    data_metrics["stress_avg"] = int(avg)
-                                    debug_log.append(f"Stres nalezen: {avg}")
+                        avg = stress_json.get("avgStressLevel") or stress_json.get("overallStressLevel")
+                        if avg is not None:
+                            data_metrics["stress_avg"] = int(avg)
                 except Exception as st_err:
                     debug_log.append(f"Chyba stresu: {st_err}")
 
-                # 7. Stažení Aktivit s požadovaným parametrem limit
+                # 7. Test čistého endpointu pro aktivity
                 try:
-                    act_url = "https://personal.connectapi.garmin.com/activitylist-service/activities/search/dedup?start=0&limit=5"
+                    act_url = f"https://personal.connectapi.garmin.com/activity-service/activities"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
                     debug_log.append(f"Activities API Status: {act_res.status_code}")
-                    if act_res.status_code != 200:
-                        act_url = "https://personal.connectapi.garmin.com/activity-service/activity/activities?limit=5"
-                        act_res = requests.get(act_url, headers=api_headers, timeout=10)
-                        debug_log.append(f"Activities Fallback Status: {act_res.status_code}")
-                    
                     if act_res.status_code == 200:
                         acts = act_res.json()
                         if isinstance(acts, list) and len(acts) > 0:
