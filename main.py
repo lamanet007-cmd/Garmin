@@ -21,8 +21,10 @@ def fetch_garmin_data_safe():
         "hrv_status": "Neznámý",
         "body_battery_max": 70,
         "resting_heart_rate": 56,
-        "stress_avg": 0,
-        "last_activity": "Silový trénink (Offline)",
+        "stress_avg": 28,
+        "vo2_max": 0,
+        "fitness_age": "Neznámý",
+        "activities_list": [],
         "muscle_mass": 68.2,
         "active_calories": 2450,
     }
@@ -50,7 +52,7 @@ def fetch_garmin_data_safe():
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_str = datetime.date.today().isoformat()
 
-                # 2. Stažení spánku (200 OK)
+                # 2. Stažení spánku
                 try:
                     sleep_url = f"https://personal.connectapi.garmin.com/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -66,7 +68,7 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 3. Stažení Body Battery (200 OK)
+                # 3. Stažení Body Battery
                 try:
                     bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -84,7 +86,7 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 4. Stažení klidového tepu (200 OK)
+                # 4. Stažení klidového tepu
                 try:
                     hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -97,7 +99,7 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 5. Stažení HRV (200 OK)
+                # 5. Stažení HRV
                 try:
                     hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
@@ -110,19 +112,51 @@ def fetch_garmin_data_safe():
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 6. Bezpečný pokus o aktivity s fallbackem
+                # 6. Stažení VO2 Max
                 try:
-                    act_url = f"https://personal.connectapi.garmin.com/activity-service/activity/activities?start=0&limit=1"
+                    vo2_url = f"https://personal.connectapi.garmin.com/metrics-service/metrics/maxMet/{today_str}"
+                    vo2_res = requests.get(vo2_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"VO2Max API Status: {vo2_res.status_code}")
+                    if vo2_res.status_code == 200:
+                        vo2_json = vo2_res.json()
+                        vo2_val = vo2_json.get("generic") or vo2_json.get("vo2Max")
+                        if vo2_val is not None:
+                            data_metrics["vo2_max"] = float(vo2_val)
+                except Exception as v_err:
+                    debug_log.append(f"Chyba VO2 max: {v_err}")
+
+                # 7. Stažení Fitness Věku
+                try:
+                    fa_url = f"https://personal.connectapi.garmin.com/metrics-service/metrics/fitnessAge/{today_str}"
+                    fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"FitnessAge API Status: {fa_res.status_code}")
+                    if fa_res.status_code == 200:
+                        fa_json = fa_res.json()
+                        fa_val = fa_json.get("fitnessAge")
+                        if fa_val is not None:
+                            data_metrics["fitness_age"] = str(fa_val)
+                except Exception as fa_err:
+                    debug_log.append(f"Chyba Fitness věku: {fa_err}")
+
+                # 8. Stažení historie aktivit za posledních 30 dní
+                try:
+                    act_url = f"https://personal.connectapi.garmin.com/activitylist-service/activities/search/dedup?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Activities API Status: {act_res.status_code}")
+                    debug_log.append(f"Activities History Status: {act_res.status_code}")
                     if act_res.status_code == 200:
                         acts = act_res.json()
-                        if isinstance(acts, list) and len(acts) > 0:
-                            last_act = acts[0].get("activityName") or acts[0].get("activityType", {}).get("typeKey")
-                            if last_act:
-                                data_metrics["last_activity"] = str(last_act)
+                        if isinstance(acts, list):
+                            parsed_acts = []
+                            for a in acts:
+                                name = a.get("activityName") or a.get("activityType", {}).get("typeKey", "Neznámá aktivita")
+                                date_time = a.get("startTimeLocal", "").split("T")[0]
+                                duration = round(a.get("duration", 0) / 60, 1) # minuty
+                                distance_km = round(a.get("distance", 0) / 1000, 2) # km
+                                parsed_acts.append({"name": name, "date": date_time, "duration": duration, "distance": distance_km})
+                            data_metrics["activities_list"] = parsed_acts
+                            debug_log.append(f"Načteno aktivit: {len(parsed_acts)}")
                 except Exception as a_err:
-                    debug_log.append(f"Chyba aktivit: {a_err}")
+                    debug_log.append(f"Chyba historie aktivit: {a_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
@@ -147,12 +181,30 @@ def home():
         "body_battery_max": garmin["body_battery_max"],
         "resting_heart_rate": garmin["resting_heart_rate"],
         "stress_avg": garmin["stress_avg"],
-        "last_activity": garmin["last_activity"],
+        "vo2_max": garmin["vo2_max"],
+        "fitness_age": garmin["fitness_age"],
+        "activities_list": garmin["activities_list"],
         "muscle_mass": garmin["muscle_mass"],
         "active_calories": garmin["active_calories"]
     }
 
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
+
+    # Generování položek pro historii aktivit
+    activities_html = ""
+    if data["activities_list"]:
+        for act in data["activities_list"]:
+            activities_html += f"""
+            <div class="flex items-center justify-between py-2.5 border-b border-slate-800/60 last:border-none text-xs">
+                <div>
+                    <div class="font-bold text-white">{act['name']}</div>
+                    <div class="text-[10px] text-slate-400">{act['date']} • {act['duration']} min</div>
+                </div>
+                <div class="font-mono text-emerald-400 font-semibold">{act['distance']} km</div>
+            </div>
+            """
+    else:
+        activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -218,18 +270,29 @@ def home():
                     <div class="text-xl font-black text-orange-400 mt-1">{data['resting_heart_rate']} <span class="text-[10px] text-slate-500 font-normal">bpm</span></div>
                 </div>
                 <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Průměrný stres</div>
-                    <div class="text-xl font-black text-purple-400 mt-1">28</div>
+                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">VO2 Max</div>
+                    <div class="text-xl font-black text-cyan-400 mt-1">{data['vo2_max']}</div>
+                </div>
+                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
+                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness Věk</div>
+                    <div class="text-xl font-black text-amber-400 mt-1">{data['fitness_age']}</div>
                 </div>
                 <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
                     <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Stav HRV</div>
                     <div class="text-sm font-bold text-teal-400 mt-1 truncate">{data['hrv_status']}</div>
                 </div>
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Poslední aktivita</div>
-                    <div class="text-sm font-bold text-pink-400 mt-1 truncate">{data['last_activity']}</div>
-                </div>
             </div>
+
+            <!-- Rozbalovací tlačítko pro historii aktivit za posledních 30 dní -->
+            <details class="bg-slate-900 border border-slate-800 rounded-2xl mb-6 shadow-xl overflow-hidden group">
+                <summary class="p-4 cursor-pointer flex items-center justify-between font-semibold text-xs uppercase tracking-wider text-slate-300 hover:text-white transition select-none">
+                    <span>Historie aktivit (Posledních 30 dní)</span>
+                    <span class="text-emerald-400 text-sm transform group-open:rotate-180 transition">▼</span>
+                </summary>
+                <div class="px-4 pb-4 pt-1 border-t border-slate-800/80 bg-black/20 max-h-60 overflow-y-auto">
+                    {activities_html}
+                </div>
+            </details>
 
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6 shadow-xl">
                 <h3 class="text-xs font-bold uppercase text-slate-400 mb-3">Tělesné metriky & Hmotnost</h3>
