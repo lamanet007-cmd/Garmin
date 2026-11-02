@@ -112,10 +112,10 @@ def home():
         <title>Garmin Dashboard</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script>
-            function copyLogToClipboard() {
+            function copyLogToClipboard() {{
                 const logContainer = document.getElementById('log-text-container');
                 const text = logContainer.innerText;
-                navigator.clipboard.writeText(text).then(() => {
+                navigator.clipboard.writeText(text).then(() => {{
                     const btn = document.getElementById('copy-btn');
                     btn.innerText = 'Zkopírováno!';
                     btn.classList.remove('bg-slate-800', 'text-emerald-400');
@@ -125,8 +125,8 @@ def home():
                         btn.classList.remove('bg-emerald-600', 'text-white');
                         btn.classList.add('bg-slate-800', 'text-emerald-400');
                     }}, 2000);
-                });
-            }
+                }});
+            }}
         </script>
     </head>
     <body class="bg-[#030712] text-slate-100 font-sans min-h-screen pb-12">
