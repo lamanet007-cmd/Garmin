@@ -21,24 +21,25 @@ api_cache = {
     "ttl": 900 
 }
 
-# Cache pro AI doporučení (na 15 minut)
+# Cache pro AI doporučení a jídelníček (na 15 minut)
 ai_cache = {
     "title": "",
     "summary": "",
     "training_advice": "",
     "nutrition_advice": "",
     "longevity_deep_dive": "",
+    "daily_menu": "",
     "timestamp": 0,
     "ttl": 900
 }
 
 def generate_ai_longevity_advice(garmin, force_ai: bool = False):
-    """Generuje detailní, hloubkovou a obsáhlou AI analýzu pro longevity a fullbody trénink."""
+    """Generuje hloubkovou AI analýzu, tréninkový manuál a denní jídelníček pro longevity a fullbody."""
     global ai_cache
     current_time = time.time()
     
     if not force_ai and ai_cache["title"] and (current_time - ai_cache["timestamp"] < ai_cache["ttl"]):
-        return ai_cache["title"], ai_cache["summary"], ai_cache["training_advice"], ai_cache["nutrition_advice"], ai_cache["longevity_deep_dive"]
+        return ai_cache["title"], ai_cache["summary"], ai_cache["training_advice"], ai_cache["nutrition_advice"], ai_cache["longevity_deep_dive"], ai_cache["daily_menu"]
 
     hrv = garmin.get("hrv_ms", 48)
     bb = garmin.get("body_battery_max", 75)
@@ -54,72 +55,108 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
         summary = (
             f"Tvoje biometrika dnes hlásí vynikající autonomní rovnováhu. S hodnotou HRV na {hrv} ms a Body Battery na {bb}/100 "
             f"je tvoje centrální nervová soustava (CNS) v optimálním stavu bez známek systémového přetížení. Klidový tep {rhr} BPM "
-            f"potvrzuje skvělou kardiovaskulární efektivitu. Tělo disponuje vysokou adaptabilitou, což znamená, že efektivně zpracovává tréninkové podněty "
-            f"a spolehlivě přepíná do růstové fáze."
+            f"potvrzuje skvělou kardiovaskulární efektivitu. Tělo disponuje vysokou adaptabilitou pro těžký trénink."
         )
         training_advice = (
-            f"Využij tohoto okna pro **těžký, progresivní fullbody trénink**. Jelikož máš maximální kapacitu pro nábor motorických jednotek, "
-            f"zavěs do plánu těžké složené cviky (dřepy, mrtvé tahy, shyby, tlaky na lavičce či nad hlavu). "
-            f"Pracuj v intenzitě 80–85 % 1RM, drž se nižších počtů opakování (5–8) s důrazem na explozivní koncentrickou fázi a kontrolovanou excentriku. "
-            f"Trénink zakonči krátkým core cvičením, abys nezatížil rekonvalescenci."
+            f"Využij tohoto okna pro **těžký, progresivní fullbody trénink**. Zavěs do plánu těžké složené cviky (dřepy, mrtvé tahy, shyby, tlaky nad hlavu). "
+            f"Pracuj v intenzitě 80–85 % 1RM, drž se nižších počtů opakování (5–8) s důrazem na explozivní koncentrickou fázi."
         )
     elif bb >= 50 and stress < 50:
         title = "STABILNÍ ADAPTACE / STŘEDNÍ INTENZITA A TECHNIKA"
         summary = (
             f"Organismus funguje ve standardním, stabilním režimu (Body Battery {bb}/100, HRV {hrv} ms). Zotavení proběhlo úspěšně, "
-            f"ale mírně zvýšená hodnota stresu ({stress}/100) naznačuje, že vnitřní prostředí těla řeší běžné denní zátěžové faktory. "
-            f"Není to stav pro tréninkové vyčerpání, ale vyžaduje chytrou regulaci objemu."
+            f"ale mírně zvýšená hodnota stresu ({stress}/100) naznačuje běžnou denní zátěž. Vyžaduje to chytrou regulaci objemu."
         )
         training_advice = (
-            f"Naplánuj si **fullbody trénink zaměřený na kvalitu pohybu, rozsah (ROM) a hypertrofii (RPE 7-8)**. "
-            f"Zvol 8–12 opakování s mírně delšími přestávkami mezi sériemi. Vyhni se selhání a zbytečnému drancování CNS. "
-            f"Tento den je perfektní pro procítění svalů (mind-muscle connection), nápravu dysbalancí a zařazení unilaterálních cviků (výpady, jednoručky), "
-            f"které šetří páteř a zároveň stimulují celé tělo."
+            f"Naplánuj si **fullbody trénink zaměřený na kvalitu pohybu a hypertrofii (RPE 7-8)**. Zvol 8–12 opakování s mírně delšími přestávkami. "
+            f"Vyhni se selhání a soustřeď se na procítění svalů (mind-muscle connection)."
         )
     else:
         title = "SIGNÁL K REGENERACI – OCHRANA LONGEVITY"
         summary = (
-            f"Pozor, data jasně ukazují na nutnost přibrzdit. HRV pokleslo na {hrv} ms, Body Battery signalizuje vyčerpání ({bb}/100) "
-            f"a průměrný stres ({stress}/100) ukazuje na vysokou zátěž organismus vs. okolní vlivy. "
-            f"Pokračování v těžkém tréninku by vedlo k vyplavování kortizolu, katabolismu svalové hmoty a dlouhodobému poklesu kondice."
+            f"Pozor, data ukazují na nutnost přibrzdit. HRV pokleslo na {hrv} ms, Body Battery signalizuje vyčerpání ({bb}/100) "
+            f"a průměrný stres ({stress}/100) poukazuje na vysokou zátěž. Pokračování v těžkém tréninku by vedlo ke katabolismu."
         )
         training_advice = (
-            f"Dnešní den **kategoricky vynechej těžké železo**. Místo toho přepni do režimu active recovery: zvol 45–60 minut lehké chůze "
-            f"v zóně 1 (tep pod 110 BPM), hluboký mobilizační strečink nebo plavání. Podpoříš tím průtok krve, urychlíš odbourání metabolitů "
-            f"a ochráníš své těžce vybudované svaly před odbouráním."
+            f"Dnešní den **kategoricky vynechej těžké železo**. Přepni do režimu active recovery: zvol 45–60 minut lehké chůze v zóně 1 "
+            f"nebo hluboký mobilizační strečink na podporu prokrvení."
         )
 
     protein_min = round(weight * 1.8, 1)
     protein_max = round(weight * 2.2, 1)
     nutrition_advice = (
-        f"Jako cvičenec na fullbody režimu potřebuješ neustálý přísun stavebního materiálu, protože svalová bílkovinná syntéza (MPS) "
-        f"zůstává zvýšená přibližně 48 hodin po tréninku celého těla. Měl bys denně cílit na **{protein_min} až {protein_max} gramů vysoce kvalitních bílkovin** "
-        f"(cca 1.8–2.2 g na kg hmotnosti), rozložených do 4 jídel. "
-        f"Nezapomínej na komplexní sacharidy pro doplnění glykogenu a zdravé tuky (omega-3, olivový olej, avokádo) nezbytné pro tvorbu testosteronu. "
-        f"Klíčový je i příjem hořčíku (glycinát před spánkem) a zinku pro optimální nervovou regeneraci."
+        f"Pro podporu svalové bílkovinné syntézy (MPS) po fullbody tréninku cílíš na **{protein_min}–{protein_max} g bílkovin denně**. "
+        f"Nezapomínej na komplexní sacharidy pro doplnění glykogenu a zdravé tuky pro tvorbu hormonů."
     )
 
     longevity_deep_dive = (
-        f"Pro maximální prodloužení zdravého věku (healthspan) a prevenci stárnutí (sarkopenie) je kombinace fullbody tréninku a precizního monitoringu klíčová. "
-        f"1. **Svalová hmota jako metabolická banka:** Skeletové svalstvo slouží jako zásobárna aminokyselin a ochrana před inzulínovou rezistencí. "
-        f"2. **Kardiovaskulární rezistence (Zóna 2):** Prodloužené kardio v nízké intenzitě (2–3x týdny) přímo stimuluje tvorbu mitochondrií v buňkách. "
-        f"3. **Spánková architektura:** Během hlubokého spánku (který u tebe hlídá skóre {sleep}/100) dochází k aktivaci glymfatického systému mozku, "
-        f"který vyplavuje toxické proteiny. Chraň si spánek jako svůj nejcennější longevity asset."
+        f"Pro dlouhověkost (healthspan) kombinuj fullbody trénink, kardio v Zóně 2 a kvalitní spánek (skóre {sleep}/100), "
+        f"který aktivuje glymfatický systém pro regeneraci mozku."
     )
 
+    # 2. Denní jídelníček na míru podle dne v týdnu
+    day_of_week = datetime.date.today().weekday() # 0 = Pondělí, 6 = Neděle
+    menus = [
+        # Pondělí
+        ("Pondělní High-Protein Jídelníček", 
+         "• **Snídaně:** Míchaná vajíčka (4 ks) na másle, celozrnný žitný chléb, avokádo a zelenina.<br>"
+         "• **Svačina:** Řecký jogurt (0% nebo 2%) s hrstí vlašských ořechů a lesním ovocem.<br>"
+         "• **Oběd:** Hovězí steak (zadní/plec) 200g, batátové pyré, pečená brokolice na olivovém oleji.<br>"
+         "• **Večeře:** Pečený losos (180g), quinoa, míchaný listový salát s olivovým olejem a citrónem."),
+        # Úterý
+        ("Úterní Fullbody Regenerační Jídelníček", 
+         "• **Snídaně:** Ovesná kaše z celozrnných vloček s 30g syrovátkového proteinu (whey), lžičkou arašídového másla a banánem.<br>"
+         "• **Svačina:** Tvaroh (tučný nebo polotučný 250g) s jablkem a skořicí.<br>"
+         "• **Oběd:** Kuřecí prsa (200g) na grilu, jasmínová rýže, dušená mrkev a hrášek.<br>"
+         "• **Večeře:** Tvarohové nebo lučinové gnocchi / omeleta ze 4 vajec se špenátem a sýrem feta."),
+        # Středa
+        ("Středomořský Longevity Jídelníček", 
+         "• **Snídaně:** Omeleta ze 3 vajec s rajčaty a sušenou šunkou (prosciutto), kousek pečiva.<br>"
+         "• **Svačina:** Cottage sýr (200g) s okurkou a ředkvičkami.<br>"
+         "• **Oběd:** Krůtí medailonky (200g), pečené brambory ve slupce, fazolové lusky na česneku.<br>"
+         "• **Večeře:** Treska nebo jiná bílá ryba pečená na másle, salát z rajčat, oliv a olivového oleje."),
+        # Čtvrtek
+        ("Čtvrteční Síla & Svalový Růst Jídelníček", 
+         "• **Snídaně:** Proteino-pšeničné palačinky s tvarohem a čerstvým ovocem.<br>"
+         "• **Svačina:** Kefír nebo skyr (400ml) s mandlemi.<br>"
+         "• **Oběd:** Vepřová panenka (200g), rýže basmati, okurkový salát.<br>"
+         "• **Večeře:** Pečený kuřecí čtvrtka, batátové hranolky z trouby, dip z řeckého jogurtu a bylinek."),
+        # Pátek
+        ("Páteční Anabolický Jídelníček", 
+         "• **Snídaně:** Vaječnášina (3 celá vejce + 1 bílek), šunka s vysokým obsahem masa, celozrnný chléb.<br>"
+         "• **Svačina:** Proteinový shake s ovesným nápojem a banánem.<br>"
+         "• **Oběd:** Hovězí guláš (libové maso) s celozrnným knedlíkem nebo rýží.<br>"
+         "• **Večeře:** Mozzarella light, rajčata, bazalkové pesto a tuňák v konzervě (ve vlastní šťávě)."),
+        # Sobota
+        ("Víkendový Fitness Jídelníček", 
+         "• **Snídaně:** Vafle z ovesných vloček a vajec, polité javorovým sirupem a tvaroh.<br>"
+         "• **Svačina:** Hrst mandlí nebo vlašských ořechů a proteinová tyčinka.<br>"
+         "• **Oběd:** Pečené krůtí stehno vykostěné, šťouchané brambory s cibulkou.<br>"
+         "• **Večeře:** Pstruh na másle a bylinkách, pečená kořenová zelenina."),
+        # Neděle
+        ("Nedělní Longevity & Odpočinkový Jídelníček", 
+         "• **Snídaně:** Sýrový toast na žitném chlebu s plátky avokáda a rajčetem.<br>"
+         "• **Svačina:** Tučný tvaroh s borůvkami.<br>"
+         "• **Oběd:** Hovězí pečeně, jasmínová rýže, vývarová polévka s masem a kořenovou zeleninou.<br>"
+         "• **Večeře:** Zeleninový salát s grilovaným kuřecím masem a dresinkem z řeckého jogurtu.")
+    ]
+
+    menu_title, menu_content = menus[day_of_week % len(menus)]
+
+    # Uložení do cache
     ai_cache["title"] = title
     ai_cache["summary"] = summary
     ai_cache["training_advice"] = training_advice
     ai_cache["nutrition_advice"] = nutrition_advice
     ai_cache["longevity_deep_dive"] = longevity_deep_dive
+    ai_cache["daily_menu"] = f"<strong>{menu_title}:</strong><br><br>{menu_content}"
     ai_cache["timestamp"] = current_time
 
-    return title, summary, training_advice, nutrition_advice, longevity_deep_dive
+    return title, summary, training_advice, nutrition_advice, longevity_deep_dive, ai_cache["daily_menu"]
 
 def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
     
-    # Ověříme, zda máme data v cache a zda ještě nevypršela jejich platnost (15 minut)
     if not force_refresh and api_cache["data"] and (current_time - api_cache["timestamp"] < api_cache["ttl"]):
         cached_data, cached_log = api_cache["data"]
         return cached_data, ["[API CACHE] Data a aktivity načteny z mezipaměti"] + cached_log
@@ -371,7 +408,6 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     except Exception as e:
         debug_log.append(f"Výjimka: {str(e)}")
 
-    # Uložení kompletních dat (včetně aktivit) do cache
     api_cache["data"] = (data_metrics, debug_log)
     api_cache["timestamp"] = current_time
 
@@ -382,7 +418,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
     garmin, debug_log = fetch_garmin_data_safe(force_refresh=refresh)
     
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
-    ai_title, ai_summary, ai_training, ai_nutrition, ai_longevity = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
+    ai_title, ai_summary, ai_training, ai_nutrition, ai_longevity, ai_menu = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
 
     activities_html = ""
     if garmin["activities_list"]:
@@ -693,7 +729,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </form>
                 </section>
 
-                <!-- AI LONGEVITY & FULLBODY COACH PANEL -->
+                <!-- AI LONGEVITY & FULLBODY COACH PANEL (VČETNĚ DENNÍHO JÍDELNÍČKU) -->
                 <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/70 border border-blue-500/30 p-6 rounded-3xl shadow-2xl relative overflow-hidden space-y-5">
                     <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
                     
@@ -735,6 +771,17 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         <p class="text-xs text-slate-300 leading-relaxed">
                             {ai_nutrition}
                         </p>
+                    </div>
+
+                    <!-- DENNÍ JÍDELNÍČEK -->
+                    <div class="bg-emerald-950/20 p-4 rounded-2xl border border-emerald-500/20 space-y-2">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                            <span>🥗</span>
+                            <span>Doporučený jídelníček na dnešní den:</span>
+                        </div>
+                        <div class="text-xs text-slate-300 leading-relaxed space-y-1">
+                            {ai_menu}
+                        </div>
                     </div>
 
                     <div class="bg-blue-950/30 p-4 rounded-2xl border border-blue-500/20 space-y-2">
