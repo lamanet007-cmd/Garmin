@@ -27,18 +27,18 @@ ai_cache = {
     "summary": "",
     "training_advice": "",
     "nutrition_advice": "",
-    "longevity_tip": "",
+    "longevity_deep_dive": "",
     "timestamp": 0,
     "ttl": 900
 }
 
 def generate_ai_longevity_advice(garmin, force_ai: bool = False):
-    """Generuje detailní, hloubkovou AI analýzu pro longevity a fullbody trénink."""
+    """Generuje extrémně detailní, hloubkovou a obsáhlou AI analýzu pro longevity a fullbody trénink."""
     global ai_cache
     current_time = time.time()
     
     if not force_ai and ai_cache["title"] and (current_time - ai_cache["timestamp"] < ai_cache["ttl"]):
-        return ai_cache["title"], ai_cache["summary"], ai_cache["training_advice"], ai_cache["nutrition_advice"], ai_cache["longevity_tip"]
+        return ai_cache["title"], ai_cache["summary"], ai_cache["training_advice"], ai_cache["nutrition_advice"], ai_cache["longevity_deep_dive"]
 
     hrv = garmin.get("hrv_ms", 48)
     bb = garmin.get("body_battery_max", 75)
@@ -46,41 +46,78 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
     sleep_h = garmin.get("sleep_hours", 7.5)
     stress = garmin.get("stress_avg", 25)
     rhr = garmin.get("resting_heart_rate", 56)
+    weight = user_stats_cache.get("weight", 84.5)
 
-    # 1. Celkové zhodnocení (Summary)
+    # 1. Hloubkový stav a zhodnocení nervové soustavy
     if bb >= 70 and hrv >= 45 and stress < 35:
-        title = "PŘIPRAVEN NA MAXIMUM VÝKONU"
-        summary = f"Tvoje biometrická data (HRV {hrv} ms, Body Battery {bb}/100, klidový tep {rhr} BPM) ukazují na špičkovou autonomní rovnováhu. Nervová soustava není přetížená a tělo je v anabolickém okně připraveno na růst."
-        training_advice = "Dnes je ideální den pro **těžký fullbody trénink**. Zaměř se na základní multikloubové cviky (dřepy, mrtvé tahy, shyby, tlaky nad hlavu). Využij skvělé nervové kondice k progresivnímu přetížení (přidej váhu nebo opakování u těžkých sérií)."
+        title = "VYSOKÁ ANABOLICKÁ PŘIPRAVENOST & OPTIMALIZACE CNS"
+        summary = (
+            f"Tvoje biometrika dnes hlásí vynikající autonomní rovnováhu. S hodnotou HRV na {hrv} ms a Body Battery na {bb}/100 "
+            f"je tvoje centrální nervová soustava (CNS) v optimálním stavu bez známek systémového přetížení. Klidový tep {rhr} BPM "
+            f"potvrzuje skvělou kardiovaskulární efektivitu. Tělo disponuje vysokou adaptabilitou, což znamená, že efektivně zpracovává tréninkové podněty "
+            f"a spolehlivě přepíná do růstové fáze."
+        )
+        training_advice = (
+            f"Využij tohoto okna pro **těžký, progresivní fullbody trénink**. Jelikož máš maximální kapacitu pro nábor motorických jednotek, "
+            f"zavěs do plánu těžké složené cviky (dřepy, mrtvé tahy, shyby, tlaky na lavičce či nad hlavu). "
+            f"Pracuj v intenzitě 80–85 % 1RM, drž se nižších počtů opakování (5–8) s důrazem na explozivní koncentrickou fázi a kontrolovanou excentriku. "
+            f"Trénink zakonči krátkým core cvičením, abys nezatížil rekonvalescenci."
+        )
     elif bb >= 50 and stress < 50:
-        title = "STŘEDNÍ ZÁTĚŽ / TECHNICKÝ DEN"
-        summary = f"Regenerace proběhla standardně (Body Battery {bb}/100, HRV {hrv} ms). Organismus funguje spolehlivě, ale centrální nervová soustava (CNS) vykazuje známky mírné únavy z předchozích dnů."
-        training_advice = "Absolvuj **fullbody trénink v mírnější intenzitě** (RPE 7-8). Vyhni se maximálním vahám do selhání. Místo toho se 100% soustřeď na technické provedení, rozsah pohybu (ROM) a delší negativní fáze opakování."
+        title = "STABILNÍ ADAPTACE / STŘEDNÍ INTENZITA A TECHNIKA"
+        summary = (
+            f"Organismus funguje ve standardním, stabilním režimu (Body Battery {bb}/100, HRV {hrv} ms). Zotavení proběhlo úspěšně, "
+            f"ale mírně zvýšená hodnota stresu ({stress}/100) naznačuje, že vnitřní prostředí těla řeší běžné denní zátěžové faktory. "
+            f"Není to stav pro tréninkové vyčerpání, ale vyžaduje chytrou regulaci objemu."
+        )
+        training_advice = (
+            f"Naplánuj si **fullbody trénink zaměřený na kvalitu pohybu, rozsah (ROM) a hypertrofii (RPE 7-8)**. "
+            f"Zvol 8–12 opakování s mírně delšími přestávkami mezi sériemi. Vyhni se selhání a zbytečnému drancování CNS. "
+            f"Tento den je perfektní pro procítění svalů (mind-muscle connection), nápravu dysbalancí a zařazení unilaterálních cviků (výpady, jednoručky), "
+            f"které šetří páteř a zároveň stimulují celé tělo."
+        )
     else:
-        title = "VYSOKÁ UNAVA – NUTNÁ REGENERACE"
-        summary = f"Pozor! Data signalizují deficit – HRV kleslo na {hrv} ms, Body Battery je na {bb}/100 a průměrný stres {stress}/100 ukazuje, že tělo bojuje s vnitřní zátěží."
-        training_advice = "Dnes **vynechej těžké železo**. Tělo potřebuje adaptaci, ne další stresory. Zvol aktivní regeneraci: 45 minut chůze v zóně 1, hluboký strečink, mobilita, nebo zařaď kompletní volno na podporu dlouhověkosti."
+        title = "SIGNÁL K REGENERACI – OCHRANA LONGEVITY"
+        summary = (
+            f"Pozor, data jasně ukazují na nutnost přibrzdit. HRV pokleslo na {hrv} ms, Body Battery signalizuje vyčerpání ({bb}/100) "
+            f"a průměrný stres ({stress}/100) ukazuje na vysokou zátěž organismus vs. okolní vlivy. "
+            f"Pokračování v těžkém tréninku by vedlo k vyplavování kortizolu, katabolismu svalové hmoty a dlouhodobému poklesu kondice."
+        )
+        training_advice = (
+            f"Dnešní den **kategoricky vynechej těžké železo**. Místo toho přepni do režimu active recovery: zvol 45–60 minut lehké chůze "
+            f"v zóně 1 (tep pod 110 BPM), hluboký mobilizační strečink nebo plavání. Podpoříš tím průtok krve, urychlíš odbourání metabolitů "
+            f"a ochráníš své těžce vybudované svaly před odbouráním."
+        )
 
-    # 2. Výživa a Longevity tipy
-    nutrition_advice = f"Pro podporu růstu svalové hmoty při fullbody trénincích udržuj příjem bílkovin na 1.6–2.2 g/kg (u tebe cca 135–185 g denně). Nezapomínej na elektrolyty (hořčík, draslík) pro správnou funkci svalových vláken a nervového přenosu."
-    
-    longevity_tips = [
-        "**mitochondriální zdraví:** Zařazuj pravidelně kardio v Zóně 2 (2–3x týdně po 45 minutách). Buduje to kapilarizaci svalů a snižuje riziko civilizačních onemocnění.",
-        "**autofagie a spánek:** Poslední jídlo jezte 3 hodiny před spánkem. Kvalitní hluboký spánek (nad 1.5 hodiny) je hlavní mechanismus pro čištění mozku od metabolického odpadu.",
-        "**sarkopenie prevention:** Fullbody trénink 3x týdně je ten vůbec nejmocnější štít proti stárnutí a ztrátě svalové síly (sarkopenii) ve vyšším věku."
-    ]
-    
-    tip = longevity_tips[datetime.date.today().day % len(longevity_tips)]
+    # 2. Detailní výživová strategie pro fullbody & svaly
+    protein_min = round(weight * 1.8, 1)
+    protein_max = round(weight * 2.2, 1)
+    nutrition_advice = (
+        f"Jako cvičenec na fullbody režimu potřebuješ neustálý přísun stavebního materiálu, protože svalová bílkovinná syntéza (MPS) "
+        f"zůstává zvýšená přibližně 48 hodin po tréninku celého těla. Měl bys denně cílit na **{protein_min} až {protein_max} gramů vysoce kvalitních bílkovin** "
+        f"(cca 1.8–2.2 g na kg hmotnosti), rozložených do 4 jídel. "
+        f"Nezapomínej na komplexní sacharidy pro doplnění glykogenu a zdravé tuky (omega-3, olivový olej, avokádo) nezbytné pro tvorbu testosteronu. "
+        f"Klíčový je i příjem hořčíku (glycinát před spánkem) a zinku pro optimální nervovou regeneraci."
+    )
+
+    # 3. Hloubkový Longevity / Dlouhověkost blok
+    longevity_deep_dive = (
+        f"Pro maximální prodloužení zdravého věku (healthspan) a prevenci stárnutí (sarkopenie) je kombinace fullbody tréninku a precizního monitoringu klíčová. "
+        f"1. **Svalová hmota jako metabolická banka:** Skeletové svalstvo slouží jako zásobárna aminokyselin a ochrana před inzulínovou rezistencí. "
+        f"2. **Kardiovaskulární rezistence (Zóna 2):** Prodloužené kardio v nízké intenzitě (2–3x týdny) přímo stimuluje tvorbu mitochondrií v buňkách. "
+        f"3. **Spánková architektura:** Během hlubokého spánku (který u tebe hlídá skóre {sleep}/100) dochází k aktivaci glymfatického systému mozku, "
+        f"který vyplavuje toxické proteiny. Chraň si spánek jako svůj nejcennější longevity asset."
+    )
 
     # Uložení do cache
     ai_cache["title"] = title
     ai_cache["summary"] = summary
     ai_cache["training_advice"] = training_advice
     ai_cache["nutrition_advice"] = nutrition_advice
-    ai_cache["longevity_tip"] = tip
+    ai_cache["longevity_deep_dive"] = longevity_deep_dive
     ai_cache["timestamp"] = current_time
 
-    return title, summary, training_advice, nutrition_advice, tip
+    return title, summary, training_advice, nutrition_advice, longevity_deep_dive
 
 def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
@@ -346,7 +383,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
     garmin, debug_log = fetch_garmin_data_safe(force_refresh=refresh)
     
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
-    ai_title, ai_summary, ai_training, ai_nutrition, ai_tip = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
+    ai_title, ai_summary, ai_training, ai_nutrition, ai_longevity = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
 
     activities_html = ""
     if garmin["activities_list"]:
@@ -657,50 +694,62 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </form>
                 </section>
 
-                <!-- AI LONGEVITY & FULLBODY COACH PANEL (PŘESUNUTÝ ÚPLNĚ DOLŮ) -->
-                <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/60 border border-blue-500/30 p-5 rounded-3xl shadow-2xl relative overflow-hidden space-y-4">
+                <!-- AI LONGEVITY & FULLBODY COACH PANEL (ÚPLNĚ DOLE - ROZŠÍŘENÝ A HLOUBKOVÝ) -->
+                <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/70 border border-blue-500/30 p-6 rounded-3xl shadow-2xl relative overflow-hidden space-y-5">
                     <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
                     
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center justify-between border-b border-white/10 pb-4">
                         <div class="flex items-center space-x-2">
-                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-widest">AI Coach & Longevity</span>
-                            <span class="text-xs font-bold text-emerald-400 font-mono">{ai_title}</span>
+                            <span class="px-2.5 py-1 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-widest">AI Master Coach</span>
+                            <span class="text-xs font-extrabold text-emerald-400 font-mono">{ai_title}</span>
                         </div>
-                        <button onclick="window.location.href='/?ai_refresh=true';" class="text-[10px] bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-xl transition shadow">
-                            🔄 Aktualizovat AI
+                        <button onclick="window.location.href='/?ai_refresh=true';" class="text-[10px] bg-blue-600 hover:bg-blue-500 text-white font-bold px-3.5 py-1.5 rounded-xl transition shadow">
+                            🔄 Generovat čerstvou AI analýzu
                         </button>
                     </div>
 
-                    <!-- Detailní zhodnocení -->
-                    <div class="text-xs text-slate-300 leading-relaxed space-y-2">
-                        <p class="font-medium">{ai_summary}</p>
+                    <!-- 1. Hloubková analýza organismu -->
+                    <div class="space-y-1.5">
+                        <div class="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center space-x-2">
+                            <span>📊</span>
+                            <span>Hloubková analýza biometrik:</span>
+                        </div>
+                        <p class="text-xs text-slate-200 leading-relaxed font-medium">
+                            {ai_summary}
+                        </p>
                     </div>
 
-                    <!-- Fullbody Tréninkový plán -->
-                    <div class="bg-black/40 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
-                        <div class="flex items-center space-x-2 text-xs font-bold text-orange-400">
+                    <!-- 2. Tréninkový manuál pro Fullbody -->
+                    <div class="bg-black/40 p-4 rounded-2xl border border-white/5 space-y-2">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-orange-400 uppercase tracking-wider">
                             <span>🏋️‍♂️</span>
-                            <span>Doporučení pro Fullbody trénink:</span>
+                            <span>Tréninkový manuál (Fullbody stratégia):</span>
                         </div>
-                        <p class="text-xs text-slate-300 leading-relaxed">{ai_training}</p>
+                        <p class="text-xs text-slate-300 leading-relaxed">
+                            {ai_training}
+                        </p>
                     </div>
 
-                    <!-- Výživa & Budování svalů -->
-                    <div class="bg-black/40 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
-                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400">
+                    <!-- 3. Makroživiny & Výživa -->
+                    <div class="bg-black/40 p-4 rounded-2xl border border-white/5 space-y-2">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
                             <span>🥩</span>
-                            <span>Výživa a makra pro růst:</span>
+                            <span>Nutriční strategie & proteinové okno:</span>
                         </div>
-                        <p class="text-xs text-slate-300 leading-relaxed">{ai_nutrition}</p>
+                        <p class="text-xs text-slate-300 leading-relaxed">
+                            {ai_nutrition}
+                        </p>
                     </div>
 
-                    <!-- Longevity tip -->
-                    <div class="bg-blue-950/20 p-3.5 rounded-2xl border border-blue-500/20 flex items-start space-x-2.5">
-                        <span class="text-base">🧬</span>
-                        <div class="text-xs text-slate-300 leading-relaxed">
-                            <strong class="text-blue-400 block mb-0.5">Longevity klíč k dlouhověkosti:</strong>
-                            {ai_tip}
+                    <!-- 4. Longevity Deep Dive -->
+                    <div class="bg-blue-950/30 p-4 rounded-2xl border border-blue-500/20 space-y-2">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-blue-300 uppercase tracking-wider">
+                            <span>🧬</span>
+                            <span>Longevity Deep Dive (Dlouhověkost & Healthspan):</span>
                         </div>
+                        <p class="text-xs text-slate-300 leading-relaxed">
+                            {ai_longevity}
+                        </p>
                     </div>
                 </section>
 
