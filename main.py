@@ -24,9 +24,9 @@ def fetch_garmin_data_safe():
         "sleep_hours": 7.5,
         "stress_avg": 25,
         "steps": 7500,
-        "chronological_age": 30,
-        "fitness_age": "28",
-        "achievable_fitness_age": "25",
+        "chronological_age": 44,
+        "fitness_age": "39",
+        "achievable_fitness_age": "37",
         "fitness_components": [],
         "activities_list": [],
     }
@@ -147,7 +147,7 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Fitness věk a doporučení
+                # 8. Fitness věk a doporučení (bezpečně zaokrouhleno)
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -155,11 +155,11 @@ def fetch_garmin_data_safe():
                     if fa_res.status_code == 200:
                         fa_json = fa_res.json()
                         if fa_json.get("chronologicalAge") is not None:
-                            data_metrics["chronological_age"] = int(fa_json.get("chronologicalAge"))
+                            data_metrics["chronological_age"] = int(round(float(fa_json.get("chronologicalAge"))))
                         if fa_json.get("fitnessAge") is not None:
-                            data_metrics["fitness_age"] = str(fa_json.get("fitnessAge"))
+                            data_metrics["fitness_age"] = str(int(round(float(fa_json.get("fitnessAge")))))
                         if fa_json.get("achievableFitnessAge") is not None:
-                            data_metrics["achievable_fitness_age"] = str(fa_json.get("achievableFitnessAge"))
+                            data_metrics["achievable_fitness_age"] = str(int(round(float(fa_json.get("achievableFitnessAge")))))
                         
                         comps = fa_json.get("components", [])
                         if isinstance(comps, list):
@@ -327,22 +327,21 @@ def home():
                         <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
                     </div>
                     
-                    <!-- Fitness věk & Doporučení (zabírá celou šířku) -->
+                    <!-- Fitness věk & Doporučení (čistý design bez přetečení) -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2 md:col-span-3">
-                        <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
+                        <div class="flex flex-col md:flex-row md:items-center justify-between mb-3 pb-3 border-b border-slate-800 gap-3">
                             <div class="flex items-center space-x-3">
                                 <span class="text-2xl">🧬</span>
                                 <div>
-                                    <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness věk / Reálný věk</p>
+                                    <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness věk (Reálný: {garmin['chronological_age']} let)</p>
                                     <div class="text-2xl font-black text-cyan-400 mt-0.5">
-                                        {garmin['fitness_age']} <small class="text-xs text-slate-400 font-normal">let</small> 
-                                        <span class="text-sm text-slate-500 font-normal">(skutečný: {garmin['chronological_age']} let)</span>
+                                        {garmin['fitness_age']} <small class="text-xs text-slate-400 font-normal">let</small>
                                     </div>
                                 </div>
                             </div>
-                            <div class="text-right">
+                            <div class="bg-black/30 px-3 py-2 rounded-xl border border-slate-800/80 text-left md:text-right">
                                 <p class="text-[10px] text-slate-400 uppercase font-bold">Dosažitelný cíl</p>
-                                <div class="text-lg font-bold text-emerald-400">{garmin['achievable_fitness_age']} let</div>
+                                <div class="text-lg font-extrabold text-emerald-400">{garmin['achievable_fitness_age']} let</div>
                             </div>
                         </div>
                         <div>
