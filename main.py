@@ -49,7 +49,7 @@ def fetch_garmin_data_safe():
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_str = datetime.date.today().isoformat()
 
-                # 2. Stažení spánku (ověřeně funguje na 83)
+                # 2. Stažení spánku
                 sleep_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailySleep?date={today_str}"
                 sleep_res = requests.get(sleep_url, headers=api_headers, timeout=5)
                 
@@ -60,47 +60,19 @@ def fetch_garmin_data_safe():
                         items = sleep_json if isinstance(sleep_json, list) else [sleep_json]
                         for item in items:
                             if isinstance(item, dict):
-                                val = item.get("sleepScores", {}).get("overall", {}).get("value")
+                                # Cílené vytažení skóre spánku ze struktury sleepScores -> overall -> value
+                                sleep_scores_dict = item.get("sleepScores", {})
+                                overall_dict = sleep_scores_dict.get("overall", {})
+                                val = overall_dict.get("value")
+                                
                                 if val is not None:
                                     data_metrics["sleep_score"] = int(val)
+                                    debug_log.append(f"Úspěšně nahráno skóre spánku: {val}")
+                                    break
                     except Exception as parse_err:
-                        debug_log.append(f"Chyba parsování spánku: {parse_err}")
+                        debug_log.append(f"Chyba parsování: {parse_err}")
                 else:
                     debug_log.append(f"Sleep API chyba: {sleep_res.status_code}")
-
-                # 3. Test endpointu pro Body Battery
-                bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/bodyBattery?date={today_str}"
-                bb_res = requests.get(bb_url, headers=api_headers, timeout=5)
-                debug_log.append(f"Body Battery API Status: {bb_res.status_code}")
-                if bb_res.status_code == 200:
-                    debug_log.append(f"BB JSON: {bb_res.text[:200]}")
-                    try:
-                        bb_json = bb_res.json()
-                        items = bb_json if isinstance(bb_json, list) else [bb_json]
-                        for item in items:
-                            # Hledáme hodnotu max / charged / most recent
-                            bb_val = item.get("chargedValue") or item.get("bodyBatteryValuesArray", [{}])[-1]
-                            if isinstance(bb_val, (int, float)):
-                                data_metrics["body_battery_max"] = int(bb_val)
-                                debug_log.append(f"Nalezeno Body Battery: {bb_val}")
-                    except Exception as bb_err:
-                        debug_log.append(f"Chyba parsování BB: {bb_err}")
-
-                # 4. Test endpointu pro Srdeční tep / Klidový tep
-                hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/heartRates?date={today_str}"
-                hr_res = requests.get(hr_url, headers=api_headers, timeout=5)
-                debug_log.append(f"HeartRates API Status: {hr_res.status_code}")
-                if hr_res.status_code == 200:
-                    debug_log.append(f"HR JSON: {hr_res.text[:200]}")
-                    try:
-                        hr_json = hr_res.json()
-                        rhr = hr_json.get("restingHeartRate")
-                        if rhr is not None:
-                            data_metrics["resting_heart_rate"] = int(rhr)
-                            debug_log.append(f"Nalezen klidový tep: {rhr}")
-                    except Exception as hr_err:
-                        debug_log.append(f"Chyba parsování HR: {hr_err}")
-
             else:
                 debug_log.append("Access token nenalezen.")
         else:
@@ -186,11 +158,11 @@ def home():
                     <div class="text-xl font-black text-emerald-400 mt-1">{data['sleep_score']}<span class="text-xs text-slate-500 font-normal">/100</span></div>
                 </div>
                 <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Body Battery (Živě)</div>
+                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Body Battery</div>
                     <div class="text-xl font-black text-blue-400 mt-1">{data['body_battery_max']}<span class="text-xs text-slate-500 font-normal">/100</span></div>
                 </div>
                 <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Klidový tep (Živě)</div>
+                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Klidový tep</div>
                     <div class="text-xl font-black text-orange-400 mt-1">{data['resting_heart_rate']} <span class="text-[10px] text-slate-500 font-normal">bpm</span></div>
                 </div>
             </div>
