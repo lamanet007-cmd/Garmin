@@ -22,14 +22,18 @@ api_cache = {
     "ttl": 900 
 }
 
-def fetch_garmin_data_safe():
+def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
-    # Pokud máme platná data v cache, vrátíme je rovnou ven
-    if api_cache["data"] and (current_time - api_cache["timestamp"] < api_cache["ttl"]):
+    
+    # Pokud nechceme vynutit obnovení a máme platná data v cache, vrátíme je
+    if not force_refresh and api_cache["data"] and (current_time - api_cache["timestamp"] < api_cache["ttl"]):
         cached_data, cached_log = api_cache["data"]
         return cached_data, ["[API CACHE] Data načtena z mezipaměti (bez dotazu na Garmin API)"] + cached_log
 
     debug_log = []
+    if force_refresh:
+        debug_log.append("[API REFRESH] Vynuceno stažení čerstvých dat z Garmin API (cache přeskočena).")
+
     data_metrics = {
         "resting_heart_rate": 56,
         "hrv_ms": 48,
@@ -78,7 +82,7 @@ def fetch_garmin_data_safe():
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. Dnešní klidový tep (200 OK)[span_0](start_span)[span_0](end_span)
+                # 2. Dnešní klidový tep (200 OK)
                 try:
                     hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -90,7 +94,7 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. HRV (200 OK)[span_1](start_span)[span_1](end_span)
+                # 3. HRV (200 OK)
                 try:
                     hrv_url = f"{base}/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
@@ -103,7 +107,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 4. Body Battery (200 OK)[span_2](start_span)[span_2](end_span)
+                # 4. Body Battery (200 OK)
                 try:
                     bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -121,7 +125,7 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 5. Spánek & Skóre (200 OK)[span_3](start_span)[span_3](end_span)
+                # 5. Spánek & Skóre (200 OK)
                 try:
                     sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -140,7 +144,7 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Dnešní kroky přes ověřený stats endpoint[span_4](start_span)[span_4](end_span)
+                # 6. Dnešní kroky přes ověřený stats endpoint
                 try:
                     steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
                     steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
@@ -155,7 +159,7 @@ def fetch_garmin_data_safe():
                 except Exception as st_err:
                     debug_log.append(f"Chyba kroků: {st_err}")
 
-                # 7. Stres přes ověřený stats endpoint[span_5](start_span)[span_5](end_span)
+                # 7. Stres přes ověřený stats endpoint
                 try:
                     stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
@@ -170,7 +174,7 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace, Měsíční kroky a Intenzivní minuty)[span_6](start_span)[span_6](end_span)
+                # 8. Denní souhrny za 90 dní (Respirace, Měsíční kroky a Intenzivní minuty)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
@@ -251,7 +255,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
-                # 10. Fitness věk a cíle[span_7](start_span)[span_7](end_span)
+                # 10. Fitness věk a cíle
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -266,7 +270,7 @@ def fetch_garmin_data_safe():
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 11. Historie aktivit[span_8](start_span)[span_8](end_span)
+                # 11. Historie aktivit
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
@@ -299,8 +303,8 @@ def fetch_garmin_data_safe():
     return data_metrics, debug_log
 
 @app.get("/", response_class=HTMLResponse)
-def home():
-    garmin, debug_log = fetch_garmin_data_safe()
+def home(refresh: bool = False):
+    garmin, debug_log = fetch_garmin_data_safe(force_refresh=refresh)
     
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
 
@@ -319,7 +323,6 @@ def home():
     else:
         activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
 
-    # Formátování měsíčních kroků s mezerami (např. 250 400)
     steps_month_formatted = f"{garmin['steps_month']:,}".replace(',', ' ')
 
     # Generování SVG grafu pro 30denní klidový tep
@@ -570,7 +573,7 @@ def home():
             </div>
 
             <div class="text-center">
-                <button onclick="window.location.reload();" class="w-full py-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-semibold text-xs uppercase tracking-wider rounded-xl transition shadow-lg">
+                <button onclick="window.location.href='/?refresh=true';" class="w-full py-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-semibold text-xs uppercase tracking-wider rounded-xl transition shadow-lg">
                     Obnovit data z Garminu
                 </button>
             </div>
