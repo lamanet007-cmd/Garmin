@@ -22,10 +22,8 @@ def fetch_garmin_data_safe():
         "body_battery_max": 75,
         "sleep_score": 78,
         "sleep_hours": 7.5,
-        "stress_avg": 28,
-        "steps": 8420,
-        "vo2_max": 45.5,
-        "fitness_age": "28 let",
+        "stress_avg": 25,
+        "steps": 7500,
         "activities_list": [],
     }
 
@@ -114,27 +112,27 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Denní souhrn (Kroky a Stres) - alternativní endpoint
+                # 6. Stres report endpoint (obdobný jako Body Battery)
                 try:
-                    summary_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailySummary?date={today_str}"
-                    sum_res = requests.get(summary_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"DailySummary API Status: {sum_res.status_code}")
-                    if sum_res.status_code == 200:
-                        sum_json = sum_res.json()
-                        steps_val = sum_json.get("totalSteps") or sum_json.get("steps")
-                        if steps_val is not None:
-                            data_metrics["steps"] = int(steps_val)
-                        stress_val = sum_json.get("averageStressLevel") or sum_json.get("stressScore")
-                        if stress_val is not None:
-                            data_metrics["stress_avg"] = int(stress_val)
-                except Exception as sum_err:
-                    debug_log.append(f"Chyba DailySummary: {sum_err}")
+                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/stress/reports/daily?startDate={today_str}&endDate={today_str}"
+                    stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"Stress Report Status: {stress_res.status_code}")
+                    if stress_res.status_code == 200:
+                        stress_json = stress_res.json()
+                        items = stress_json if isinstance(stress_json, list) else [stress_json]
+                        for item in items:
+                            if isinstance(item, dict):
+                                avg_stress = item.get("avgStressLevel") or item.get("averageStressLevel")
+                                if avg_stress is not None:
+                                    data_metrics["stress_avg"] = int(avg_stress)
+                except Exception as st_err:
+                    debug_log.append(f"Chyba stresu: {st_err}")
 
-                # 7. Historie aktivit za 30 dní - alternativní endpoint
+                # 7. Pokus o aktivity přes bezpečný endpoint
                 try:
-                    act_url = f"https://personal.connectapi.garmin.com/activity-service/activity/activities?start=0&limit=30"
+                    act_url = f"https://personal.connectapi.garmin.com/activitylist-service/activities/search/dedup?start=0&limit=10"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Activities API Status: {act_res.status_code}")
+                    debug_log.append(f"Activities Search Status: {act_res.status_code}")
                     if act_res.status_code == 200:
                         acts = act_res.json()
                         if isinstance(acts, list):
@@ -178,7 +176,7 @@ def home():
             </div>
             """
     else:
-        activities_html = '<div class="text-xs text-slate-500 py-2">Historie aktivit se načítá nebo vyžaduje rozšířená oprávnění klíče.</div>'
+        activities_html = '<div class="text-xs text-slate-500 py-2">Historie aktivit vyžaduje specifická oprávnění klíče.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -276,10 +274,10 @@ def home():
                 </div>
             </section>
 
-            <!-- Rozbalovací historie aktivit za posledních 30 dní -->
+            <!-- Rozbalovací historie aktivit -->
             <details class="bg-slate-900 border border-slate-800 rounded-2xl mb-6 shadow-xl overflow-hidden group">
                 <summary class="p-4 cursor-pointer flex items-center justify-between font-semibold text-xs uppercase tracking-wider text-slate-300 hover:text-white transition select-none">
-                    <span>Historie aktivit (Posledních 30 dní)</span>
+                    <span>Historie aktivit</span>
                     <span class="text-emerald-400 text-sm transform group-open:rotate-180 transition">▼</span>
                 </summary>
                 <div class="px-4 pb-4 pt-1 border-t border-slate-800/80 bg-black/20 max-h-60 overflow-y-auto">
