@@ -46,10 +46,10 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
         "chronological_age": 44,
         "fitness_age": "39",
         "achievable_fitness_age": "38",
-        "vo2_max": 45.0,
-        "active_calories": 550,
-        "bmr_calories": 1850,
-        "total_calories": 2400,
+        "vo2_max": 0.0,
+        "active_calories": 0,
+        "bmr_calories": 0,
+        "total_calories": 0,
         "respiration_avg": 14.5,
         "intensity_curr_week": 0,
         "intensity_week": 0,
@@ -148,7 +148,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Spolehlivé stahování kroků za posledních 30 dní (jednotlivé dny přes ověřený stats endpoint)
+                # 6. Spolehlivé stahování kroků za posledních 30 dní
                 try:
                     total_month_steps = 0
                     for i in range(29, -1, -1):
@@ -167,7 +167,6 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                                         if d_str == today_str:
                                             data_metrics["steps"] = val_int
                     data_metrics["steps_month"] = total_month_steps
-                    debug_log.append(f"Kroky staženy úspěšně (dnes: {data_metrics['steps']}, měsíc: {total_month_steps})")
                 except Exception as st_err:
                     debug_log.append(f"Chyba kroků: {st_err}")
 
@@ -186,7 +185,26 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace, Kalorie a Intenzivní minuty)
+                # 8. Kalorie přes ověřený stats endpoint
+                try:
+                    cal_url = f"{base}/usersummary-service/stats/calories/daily/{today_str}/{today_str}"
+                    cal_res = requests.get(cal_url, headers=api_headers, timeout=10)
+                    if cal_res.status_code == 200:
+                        cal_json = cal_res.json()
+                        items = cal_json if isinstance(cal_json, list) else [cal_json]
+                        for item in items:
+                            if isinstance(item, dict):
+                                act_c = item.get("activeKilocalories") or item.get("activeCalories") or 0
+                                bmr_c = item.get("bmrKilocalories") or item.get("bmrCalories") or 0
+                                tot_c = item.get("burnedKilocalories") or item.get("totalKilocalories") or (int(act_c) + int(bmr_c))
+                                data_metrics["active_calories"] = int(act_c)
+                                data_metrics["bmr_calories"] = int(bmr_c)
+                                data_metrics["total_calories"] = int(tot_c)
+                        debug_log.append("Kalorie staženy úspěšně!")
+                except Exception as cal_err:
+                    debug_log.append(f"Chyba kalorií: {cal_err}")
+
+                # 9. Denní souhrny za 90 dní (Respirace a Intenzivní minuty)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_7_ago = (today_obj - datetime.timedelta(days=6)).isoformat()
@@ -233,15 +251,6 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                                         if avg_r is not None:
                                             data_metrics["respiration_avg"] = round(float(avg_r), 1)
 
-                                    # Energetický výdej (Kalorie za dnešek)
-                                    act_cal = row.get("activeKilocalories") or row.get("activeCalories") or 0
-                                    bmr_cal = row.get("bmrKilocalories") or row.get("bmrCalories") or 0
-                                    tot_cal = row.get("burnedKilocalories") or row.get("totalKilocalories") or (int(act_cal) + int(bmr_cal))
-                                    
-                                    data_metrics["active_calories"] = int(act_cal)
-                                    data_metrics["bmr_calories"] = int(bmr_cal)
-                                    data_metrics["total_calories"] = int(tot_cal)
-
                         data_metrics["intensity_curr_week"] = int_curr_w
                         data_metrics["intensity_week"] = int_roll_w
                         data_metrics["intensity_month"] = int_m
@@ -249,7 +258,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as sum_err:
                     debug_log.append(f"Chyba souhrnů: {sum_err}")
 
-                # 9. Spolehlivé stahování 30denní historie klidového tepu pro graf
+                # 10. Spolehlivé stahování 30denní historie klidového tepu pro graf
                 try:
                     hr_history = []
                     for i in range(29, -1, -1):
@@ -267,7 +276,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
-                # 10. Fitness věk, VO2 Max a cíle
+                # 11. Fitness věk a VO2 Max
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -280,13 +289,14 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                         if fa_json.get("achievableFitnessAge") is not None:
                             data_metrics["achievable_fitness_age"] = str(int(round(float(fa_json.get("achievableFitnessAge")))))
                         
-                        vo2 = fa_json.get("vo2MaxValue") or fa_json.get("vo2Max")
+                        vo2 = fa_json.get("vo2MaxValue") or fa_json.get("vo2Max") or fa_json.get("genericVo2MaxValue", {}).get("vo2MaxValue")
                         if vo2 is not None:
                             data_metrics["vo2_max"] = round(float(vo2), 1)
+                            debug_log.append(f"VO2 Max staženo: {data_metrics['vo2_max']}")
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 11. Historie aktivit
+                # 12. Historie aktivit
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
