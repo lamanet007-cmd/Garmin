@@ -21,54 +21,66 @@ api_cache = {
     "ttl": 900 
 }
 
-# Samostatná cache pro AI doporučení (na 15 minut)
+# Cache pro AI doporučení (na 15 minut)
 ai_cache = {
-    "readiness": "",
-    "recommendation": "",
-    "tip": "",
+    "title": "",
+    "summary": "",
+    "training_advice": "",
+    "nutrition_advice": "",
+    "longevity_tip": "",
     "timestamp": 0,
     "ttl": 900
 }
 
 def generate_ai_longevity_advice(garmin, force_ai: bool = False):
-    """Generuje nebo vrací cacheovanou AI analýzu pro longevity a fullbody trénink."""
+    """Generuje detailní, hloubkovou AI analýzu pro longevity a fullbody trénink."""
     global ai_cache
     current_time = time.time()
     
-    if not force_ai and ai_cache["readiness"] and (current_time - ai_cache["timestamp"] < ai_cache["ttl"]):
-        return ai_cache["readiness"], ai_cache["recommendation"], ai_cache["tip"]
+    if not force_ai and ai_cache["title"] and (current_time - ai_cache["timestamp"] < ai_cache["ttl"]):
+        return ai_cache["title"], ai_cache["summary"], ai_cache["training_advice"], ai_cache["nutrition_advice"], ai_cache["longevity_tip"]
 
     hrv = garmin.get("hrv_ms", 48)
     bb = garmin.get("body_battery_max", 75)
     sleep = garmin.get("sleep_score", 78)
+    sleep_h = garmin.get("sleep_hours", 7.5)
     stress = garmin.get("stress_avg", 25)
+    rhr = garmin.get("resting_heart_rate", 56)
 
-    # Logika pro tréninkovou připravenost
+    # 1. Celkové zhodnocení (Summary)
     if bb >= 70 and hrv >= 45 and stress < 35:
-        readiness = "OPTIMÁLNÍ PRO VÝKON"
-        recommendation = "Tvoje tělo skvěle regenerovalo. Dnes je ideální den pro **těžký fullbody trénink** zaměřený na základní složené cviky (dřepy, mrtvé tahy, shyby) s důrazem na progresivní přetížení."
+        title = "PŘIPRAVEN NA MAXIMUM VÝKONU"
+        summary = f"Tvoje biometrická data (HRV {hrv} ms, Body Battery {bb}/100, klidový tep {rhr} BPM) ukazují na špičkovou autonomní rovnováhu. Nervová soustava není přetížená a tělo je v anabolickém okně připraveno na růst."
+        training_advice = "Dnes je ideální den pro **těžký fullbody trénink**. Zaměř se na základní multikloubové cviky (dřepy, mrtvé tahy, shyby, tlaky nad hlavu). Využij skvělé nervové kondice k progresivnímu přetížení (přidej váhu nebo opakování u těžkých sérií)."
     elif bb >= 50 and stress < 50:
-        readiness = "MÍRNÁ UNAVA – STŘEDNÍ INTENZITA"
-        recommendation = "Regenerace proběhla v pořádku, ale nervová soustava hlásí mírnou zátěž. Zvol **fullbody v mírnějším tempu** (menší objem, technické provedení) nebo zařazení mobility."
+        title = "STŘEDNÍ ZÁTĚŽ / TECHNICKÝ DEN"
+        summary = f"Regenerace proběhla standardně (Body Battery {bb}/100, HRV {hrv} ms). Organismus funguje spolehlivě, ale centrální nervová soustava (CNS) vykazuje známky mírné únavy z předchozích dnů."
+        training_advice = "Absolvuj **fullbody trénink v mírnější intenzitě** (RPE 7-8). Vyhni se maximálním vahám do selhání. Místo toho se 100% soustřeď na technické provedení, rozsah pohybu (ROM) a delší negativní fáze opakování."
     else:
-        readiness = "VYSOKÁ UNAVA – DOPORUČENA REGENERACE"
-        recommendation = "Pozor, HRV a Body Battery ukazují na deficit. Dnešní plán: **Aktivní regenerace**, lehká procházka, strečink nebo úplný odpočinek pro podporu longevity."
+        title = "VYSOKÁ UNAVA – NUTNÁ REGENERACE"
+        summary = f"Pozor! Data signalizují deficit – HRV kleslo na {hrv} ms, Body Battery je na {bb}/100 a průměrný stres {stress}/100 ukazuje, že tělo bojuje s vnitřní zátěží."
+        training_advice = "Dnes **vynechej těžké železo**. Tělo potřebuje adaptaci, ne další stresory. Zvol aktivní regeneraci: 45 minut chůze v zóně 1, hluboký strečink, mobilita, nebo zařaď kompletní volno na podporu dlouhověkosti."
 
+    # 2. Výživa a Longevity tipy
+    nutrition_advice = f"Pro podporu růstu svalové hmoty při fullbody trénincích udržuj příjem bílkovin na 1.6–2.2 g/kg (u tebe cca 135–185 g denně). Nezapomínej na elektrolyty (hořčík, draslík) pro správnou funkci svalových vláken a nervového přenosu."
+    
     longevity_tips = [
-        "Pro dlouhověkost (longevity) nezapomínej na optimální příjem bílkovin (cca 1.6–2g na kg váhy) k ochraně svalové hmoty.",
-        "Kvalitní hluboký spánek je tvůj nejlepší nástroj pro dlouhověkost a opravu tkání po fullbody tréninku.",
-        "Pravidelné střídání zátěže a kardia (Zóna 2) buduje kardiovaskulární rezervu pro zdravý věk."
+        "**mitochondriální zdraví:** Zařazuj pravidelně kardio v Zóně 2 (2–3x týdně po 45 minutách). Buduje to kapilarizaci svalů a snižuje riziko civilizačních onemocnění.",
+        "**autofagie a spánek:** Poslední jídlo jezte 3 hodiny před spánkem. Kvalitní hluboký spánek (nad 1.5 hodiny) je hlavní mechanismus pro čištění mozku od metabolického odpadu.",
+        "**sarkopenie prevention:** Fullbody trénink 3x týdně je ten vůbec nejmocnější štít proti stárnutí a ztrátě svalové síly (sarkopenii) ve vyšším věku."
     ]
     
     tip = longevity_tips[datetime.date.today().day % len(longevity_tips)]
 
-    # Uložení do AI cache
-    ai_cache["readiness"] = readiness
-    ai_cache["recommendation"] = recommendation
-    ai_cache["tip"] = tip
+    # Uložení do cache
+    ai_cache["title"] = title
+    ai_cache["summary"] = summary
+    ai_cache["training_advice"] = training_advice
+    ai_cache["nutrition_advice"] = nutrition_advice
+    ai_cache["longevity_tip"] = tip
     ai_cache["timestamp"] = current_time
 
-    return readiness, recommendation, tip
+    return title, summary, training_advice, nutrition_advice, tip
 
 def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
@@ -334,7 +346,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
     garmin, debug_log = fetch_garmin_data_safe(force_refresh=refresh)
     
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
-    readiness, recommendation, longevity_tip = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
+    ai_title, ai_summary, ai_training, ai_nutrition, ai_tip = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
 
     activities_html = ""
     if garmin["activities_list"]:
@@ -436,7 +448,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
             
             <header class="mb-6 flex items-end justify-between border-b border-[#2c2c2e] pb-4">
                 <div>
-                    <p class="text-xs font-semibold text-[#8e8e93] uppercase tracking-wider">AI Longevity & Fitness</p>
+                    <p class="text-xs font-semibold text-[#8e8e93] uppercase tracking-wider">Garmin Live Dashboard</p>
                     <h1 class="text-3xl font-extrabold text-white tracking-tight mt-0.5">Zdraví & Výkon</h1>
                 </div>
                 <div class="flex items-center space-x-2 bg-[#1c1c1e] px-3 py-1.5 rounded-full border border-[#2c2c2e]">
@@ -445,31 +457,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                 </div>
             </header>
 
-            <!-- AI LONGEVITY & FULLBODY COACH PANEL S TLAČITKEM NA VYŽÁDÁNÍ -->
-            <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/40 border border-blue-500/30 p-5 rounded-3xl mb-6 shadow-2xl relative overflow-hidden">
-                <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center space-x-2">
-                        <span class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-widest">AI Coach</span>
-                        <span class="text-xs font-bold text-emerald-400 font-mono">{readiness}</span>
-                    </div>
-                    <button onclick="window.location.href='/?ai_refresh=true';" class="text-[10px] bg-blue-600 hover:bg-blue-500 text-white font-bold px-2.5 py-1 rounded-xl transition shadow">
-                        🔄 Vyžádat AI
-                    </button>
-                </div>
-                <p class="text-sm text-slate-200 leading-relaxed font-medium mb-3">
-                    {recommendation}
-                </p>
-                <div class="bg-black/40 p-3 rounded-2xl border border-white/5 flex items-start space-x-2.5">
-                    <span class="text-base">🧬</span>
-                    <div class="text-xs text-slate-400 leading-relaxed">
-                        <strong class="text-slate-200 block mb-0.5">Longevity Tip dne:</strong>
-                        {longevity_tip}
-                    </div>
-                </div>
-            </section>
-
-            <!-- Debug log schovaný -->
+            <!-- Debug log schovaný nahoře -->
             <details class="bg-[#1c1c1e] border border-[#2c2c2e] rounded-2xl mb-6 overflow-hidden group">
                 <summary class="p-3.5 cursor-pointer flex items-center justify-between font-semibold text-xs text-[#8e8e93] hover:text-white transition select-none">
                     <span class="flex items-center space-x-2">
@@ -667,6 +655,53 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                             Uložit změny
                         </button>
                     </form>
+                </section>
+
+                <!-- AI LONGEVITY & FULLBODY COACH PANEL (PŘESUNUTÝ ÚPLNĚ DOLŮ) -->
+                <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/60 border border-blue-500/30 p-5 rounded-3xl shadow-2xl relative overflow-hidden space-y-4">
+                    <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
+                    
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-widest">AI Coach & Longevity</span>
+                            <span class="text-xs font-bold text-emerald-400 font-mono">{ai_title}</span>
+                        </div>
+                        <button onclick="window.location.href='/?ai_refresh=true';" class="text-[10px] bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-xl transition shadow">
+                            🔄 Aktualizovat AI
+                        </button>
+                    </div>
+
+                    <!-- Detailní zhodnocení -->
+                    <div class="text-xs text-slate-300 leading-relaxed space-y-2">
+                        <p class="font-medium">{ai_summary}</p>
+                    </div>
+
+                    <!-- Fullbody Tréninkový plán -->
+                    <div class="bg-black/40 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-orange-400">
+                            <span>🏋️‍♂️</span>
+                            <span>Doporučení pro Fullbody trénink:</span>
+                        </div>
+                        <p class="text-xs text-slate-300 leading-relaxed">{ai_training}</p>
+                    </div>
+
+                    <!-- Výživa & Budování svalů -->
+                    <div class="bg-black/40 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400">
+                            <span>🥩</span>
+                            <span>Výživa a makra pro růst:</span>
+                        </div>
+                        <p class="text-xs text-slate-300 leading-relaxed">{ai_nutrition}</p>
+                    </div>
+
+                    <!-- Longevity tip -->
+                    <div class="bg-blue-950/20 p-3.5 rounded-2xl border border-blue-500/20 flex items-start space-x-2.5">
+                        <span class="text-base">🧬</span>
+                        <div class="text-xs text-slate-300 leading-relaxed">
+                            <strong class="text-blue-400 block mb-0.5">Longevity klíč k dlouhověkosti:</strong>
+                            {ai_tip}
+                        </div>
+                    </div>
                 </section>
 
                 <div class="pt-2">
