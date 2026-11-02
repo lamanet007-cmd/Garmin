@@ -63,7 +63,7 @@ def fetch_garmin_data_safe():
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. Dnešní klidový tep (200 OK)[span_0](start_span)[span_0](end_span)
+                # 2. Dnešní klidový tep (200 OK)
                 try:
                     hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -75,7 +75,7 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. HRV (200 OK)[span_1](start_span)[span_1](end_span)
+                # 3. HRV (200 OK)
                 try:
                     hrv_url = f"{base}/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
@@ -88,7 +88,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 4. Body Battery (200 OK)[span_2](start_span)[span_2](end_span)
+                # 4. Body Battery (200 OK)
                 try:
                     bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -106,7 +106,7 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 5. Spánek & Skóre (200 OK)[span_3](start_span)[span_3](end_span)
+                # 5. Spánek & Skóre (200 OK)
                 try:
                     sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -125,7 +125,7 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Kroky přes ověřený stats endpoint[span_4](start_span)[span_4](end_span)
+                # 6. Kroky přes ověřený stats endpoint
                 try:
                     steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
                     steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
@@ -140,7 +140,7 @@ def fetch_garmin_data_safe():
                 except Exception as st_err:
                     debug_log.append(f"Chyba kroků: {st_err}")
 
-                # 7. Stres přes ověřený stats endpoint[span_5](start_span)[span_5](end_span)
+                # 7. Stres přes ověřený stats endpoint
                 try:
                     stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
@@ -155,13 +155,12 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty: aktuální týden od pondělí, 7d, měsíc, 90d)[span_6](start_span)[span_6](end_span)
+                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
                     date_7_ago = (today_obj - datetime.timedelta(days=6)).isoformat()
                     
-                    # Pondělí aktuálního týdne (weekday(): Pondělí = 0, Neděle = 6)
                     days_since_monday = today_obj.weekday()
                     current_week_start = (today_obj - datetime.timedelta(days=days_since_monday)).isoformat()
 
@@ -229,7 +228,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
-                # 10. Fitness věk a cíle[span_7](start_span)[span_7](end_span)
+                # 10. Fitness věk a cíle
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -244,7 +243,7 @@ def fetch_garmin_data_safe():
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 11. Historie aktivit[span_8](start_span)[span_8](end_span)
+                # 11. Historie aktivit
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
@@ -446,7 +445,7 @@ def home():
                         <div class="text-xl font-black text-indigo-400 mt-1">{garmin['respiration_avg']} <small class="text-xs text-slate-500 font-normal">dechů/m</small></div>
                     </div>
                     
-                    <!-- Intenzivní minuty s přepínačem (Akt. týden, 7 dní, Měsíc, 90 dní) -->
+                    <!-- Intenzivní minuty s přepínačem -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2">
                         <div class="flex items-center justify-between mb-2">
                             <div class="flex items-center space-x-2">
@@ -487,8 +486,8 @@ def home():
                         </div>
                     </div>
 
-                    <!-- Měsíční průměr klidového tepu & Skrytelný graf -->
-                    <details class="bg-gradient-to-br from-slate-900 to-slate-900/40 rounded-2xl border border-slate-800 shadow-xl col-span-2 md:col-span-3 overflow-hidden group" open>
+                    <!-- Měsíční průměr klidového tepu & Skrytelný graf (výchozí stav: skrytý) -->
+                    <details class="bg-gradient-to-br from-slate-900 to-slate-900/40 rounded-2xl border border-slate-800 shadow-xl col-span-2 md:col-span-3 overflow-hidden group">
                         <summary class="p-4 cursor-pointer flex items-center justify-between select-none list-none">
                             <div class="flex items-center space-x-3">
                                 <span class="text-xl">📈</span>
