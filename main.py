@@ -46,6 +46,10 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
         "chronological_age": 44,
         "fitness_age": "39",
         "achievable_fitness_age": "38",
+        "vo2_max": 45.0,
+        "active_calories": 550,
+        "bmr_calories": 1850,
+        "total_calories": 2400,
         "respiration_avg": 14.5,
         "intensity_curr_week": 0,
         "intensity_week": 0,
@@ -182,7 +186,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty)
+                # 8. Denní souhrny za 90 dní (Respirace, Kalorie a Intenzivní minuty)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_7_ago = (today_obj - datetime.timedelta(days=6)).isoformat()
@@ -229,6 +233,15 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                                         if avg_r is not None:
                                             data_metrics["respiration_avg"] = round(float(avg_r), 1)
 
+                                    # Energetický výdej (Kalorie za dnešek)
+                                    act_cal = row.get("activeKilocalories") or row.get("activeCalories") or 0
+                                    bmr_cal = row.get("bmrKilocalories") or row.get("bmrCalories") or 0
+                                    tot_cal = row.get("burnedKilocalories") or row.get("totalKilocalories") or (int(act_cal) + int(bmr_cal))
+                                    
+                                    data_metrics["active_calories"] = int(act_cal)
+                                    data_metrics["bmr_calories"] = int(bmr_cal)
+                                    data_metrics["total_calories"] = int(tot_cal)
+
                         data_metrics["intensity_curr_week"] = int_curr_w
                         data_metrics["intensity_week"] = int_roll_w
                         data_metrics["intensity_month"] = int_m
@@ -254,7 +267,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
-                # 10. Fitness věk a cíle
+                # 10. Fitness věk, VO2 Max a cíle
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -266,6 +279,10 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                             data_metrics["fitness_age"] = str(int(round(float(fa_json.get("fitnessAge")))))
                         if fa_json.get("achievableFitnessAge") is not None:
                             data_metrics["achievable_fitness_age"] = str(int(round(float(fa_json.get("achievableFitnessAge")))))
+                        
+                        vo2 = fa_json.get("vo2MaxValue") or fa_json.get("vo2Max")
+                        if vo2 is not None:
+                            data_metrics["vo2_max"] = round(float(vo2), 1)
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
@@ -478,6 +495,21 @@ def home(refresh: bool = False):
                         <div class="text-xl font-black text-indigo-400 mt-1">{garmin['respiration_avg']} <small class="text-xs text-slate-500 font-normal">dechů/m</small></div>
                     </div>
                     
+                    <!-- VO2 Max -->
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">🫀</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">VO2 Max</p>
+                        <div class="text-xl font-black text-rose-400 mt-1">{garmin['vo2_max']} <small class="text-xs text-slate-500 font-normal">ml/kg/min</small></div>
+                    </div>
+                    
+                    <!-- Energetický výdej (Kalorie) -->
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">⚡</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Energetický výdej</p>
+                        <div class="text-xl font-black text-yellow-400 mt-1">{garmin['total_calories']} <small class="text-xs text-slate-500 font-normal">kcal</small></div>
+                        <div class="text-[10px] text-slate-400 mt-1 font-mono">Aktivní: <span class="text-yellow-300 font-bold">{garmin['active_calories']}</span> | Klid: <span class="text-slate-300">{garmin['bmr_calories']}</span></div>
+                    </div>
+
                     <!-- Intenzivní minuty s přepínačem -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2">
                         <div class="flex items-center justify-between mb-2">
