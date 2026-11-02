@@ -31,7 +31,7 @@ def fetch_garmin_data_safe():
         return data_metrics, debug_log
 
     try:
-        # 1. Získání tokenu (timeout zvýšen na 10s)
+        # 1. Získání tokenu
         token_url = "https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token"
         headers = {"Authorization": f"ApiKey {GARMIN_PERSONAL_API_KEY}"}
         token_res = requests.post(token_url, headers=headers, timeout=10)
@@ -68,27 +68,27 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba při stahování spánku: {s_err}")
 
-                # 3. Stažení Dailies (s timeoutem 12s)
+                # 3. Test endpointu 'userMetrics' pro Body Battery a tep
                 try:
-                    dailies_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailies?date={today_str}"
-                    dailies_res = requests.get(dailies_url, headers=api_headers, timeout=12)
-                    debug_log.append(f"Dailies API Status: {dailies_res.status_code}")
-                    if dailies_res.status_code == 200:
-                        debug_log.append(f"Dailies JSON: {dailies_res.text[:300]}")
-                        dailies_json = dailies_res.json()
-                        items = dailies_json if isinstance(dailies_json, list) else [dailies_json]
+                    metrics_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/userMetrics?date={today_str}"
+                    metrics_res = requests.get(metrics_url, headers=api_headers, timeout=12)
+                    debug_log.append(f"UserMetrics API Status: {metrics_res.status_code}")
+                    if metrics_res.status_code == 200:
+                        debug_log.append(f"Metrics JSON: {metrics_res.text[:300]}")
+                        metrics_json = metrics_res.json()
+                        items = metrics_json if isinstance(metrics_json, list) else [metrics_json]
                         for item in items:
                             if isinstance(item, dict):
                                 rhr = item.get("restingHeartRate")
                                 if rhr is not None:
                                     data_metrics["resting_heart_rate"] = int(rhr)
-                                    debug_log.append(f"Nalezen klidový tep v dailies: {rhr}")
-                                bb = item.get("bodyBatteryChargedValue") or item.get("bodyBatteryMostRecentValue")
+                                    debug_log.append(f"Nalezen klidový tep: {rhr}")
+                                bb = item.get("bodyBatteryChargedValue") or item.get("bodyBattery")
                                 if bb is not None:
                                     data_metrics["body_battery_max"] = int(bb)
-                                    debug_log.append(f"Nalezeno Body Battery v dailies: {bb}")
-                except Exception as d_err:
-                    debug_log.append(f"Chyba při stahování dailies: {d_err}")
+                                    debug_log.append(f"Nalezeno Body Battery: {bb}")
+                except Exception as m_err:
+                    debug_log.append(f"Chyba při stahování userMetrics: {m_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
