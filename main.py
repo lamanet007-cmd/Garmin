@@ -68,27 +68,39 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba při stahování spánku: {s_err}")
 
-                # 3. Test endpointu 'userMetrics' pro Body Battery a tep
+                # 3. Test endpointu 'stress'
                 try:
-                    metrics_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/userMetrics?date={today_str}"
-                    metrics_res = requests.get(metrics_url, headers=api_headers, timeout=12)
-                    debug_log.append(f"UserMetrics API Status: {metrics_res.status_code}")
-                    if metrics_res.status_code == 200:
-                        debug_log.append(f"Metrics JSON: {metrics_res.text[:300]}")
-                        metrics_json = metrics_res.json()
-                        items = metrics_json if isinstance(metrics_json, list) else [metrics_json]
+                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/stress?date={today_str}"
+                    stress_res = requests.get(stress_url, headers=api_headers, timeout=12)
+                    debug_log.append(f"Stress API Status: {stress_res.status_code}")
+                    if stress_res.status_code == 200:
+                        debug_log.append(f"Stress JSON: {stress_res.text[:300]}")
+                        stress_json = stress_res.json()
+                        items = stress_json if isinstance(stress_json, list) else [stress_json]
                         for item in items:
                             if isinstance(item, dict):
-                                rhr = item.get("restingHeartRate")
-                                if rhr is not None:
-                                    data_metrics["resting_heart_rate"] = int(rhr)
-                                    debug_log.append(f"Nalezen klidový tep: {rhr}")
-                                bb = item.get("bodyBatteryChargedValue") or item.get("bodyBattery")
+                                bb = item.get("bodyBatteryChargedValue") or item.get("maxBodyBattery")
                                 if bb is not None:
                                     data_metrics["body_battery_max"] = int(bb)
-                                    debug_log.append(f"Nalezeno Body Battery: {bb}")
-                except Exception as m_err:
-                    debug_log.append(f"Chyba při stahování userMetrics: {m_err}")
+                                    debug_log.append(f"Nalezeno BB v stress: {bb}")
+                except Exception as st_err:
+                    debug_log.append(f"Chyba stress: {st_err}")
+
+                # 4. Test endpointu 'hrv'
+                try:
+                    hrv_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/hrv?date={today_str}"
+                    hrv_res = requests.get(hrv_url, headers=api_headers, timeout=12)
+                    debug_log.append(f"HRV API Status: {hrv_res.status_code}")
+                    if hrv_res.status_code == 200:
+                        debug_log.append(f"HRV JSON: {hrv_res.text[:300]}")
+                        hrv_json = hrv_res.json()
+                        # Zkusíme vytáhnout stav HRV
+                        status = hrv_json.get("hrvStatus")
+                        if status:
+                            data_metrics["hrv_status"] = str(status)
+                            debug_log.append(f"Nalezen HRV status: {status}")
+                except Exception as h_err:
+                    debug_log.append(f"Chyba hrv: {h_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
