@@ -49,10 +49,11 @@ def fetch_garmin_data_safe():
             if access_token:
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_str = datetime.date.today().isoformat()
+                base = "https://personal.connectapi.garmin.com"
 
                 # 2. Klidový tep (200 OK)
                 try:
-                    hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyHeartRate?date={today_str}"
+                    hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
                     if hr_res.status_code == 200:
                         debug_log.append("Klidový tep stažen (200 OK)!")
@@ -64,7 +65,7 @@ def fetch_garmin_data_safe():
 
                 # 3. HRV (200 OK)
                 try:
-                    hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
+                    hrv_url = f"{base}/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
                     if hrv_res.status_code == 200:
                         debug_log.append("HRV staženo (200 OK)!")
@@ -77,7 +78,7 @@ def fetch_garmin_data_safe():
 
                 # 4. Body Battery (200 OK)
                 try:
-                    bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
+                    bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
                     if bb_res.status_code == 200:
                         debug_log.append("Body Battery staženo (200 OK)!")
@@ -95,7 +96,7 @@ def fetch_garmin_data_safe():
 
                 # 5. Spánek & Skóre (200 OK)
                 try:
-                    sleep_url = f"https://personal.connectapi.garmin.com/sleep-service/sleep/dailySleep?date={today_str}"
+                    sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
                     if sleep_res.status_code == 200:
                         debug_log.append("Spánek stažen (200 OK)!")
@@ -112,25 +113,41 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Stres report endpoint (obdobný jako Body Battery)
+                # 6. Kroky přes ověřený stats endpoint
                 try:
-                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/stress/reports/daily?startDate={today_str}&endDate={today_str}"
+                    steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
+                    steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"Steps API Status: {steps_res.status_code}")
+                    if steps_res.status_code == 200:
+                        steps_json = steps_res.json()
+                        items = steps_json if isinstance(steps_json, list) else [steps_json]
+                        for item in items:
+                            if isinstance(item, dict):
+                                s_val = item.get("totalSteps") or item.get("steps") or item.get("value")
+                                if s_val is not None:
+                                    data_metrics["steps"] = int(s_val)
+                except Exception as st_err:
+                    debug_log.append(f"Chyba kroků: {st_err}")
+
+                # 7. Stres přes ověřený stats endpoint
+                try:
+                    stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Stress Report Status: {stress_res.status_code}")
+                    debug_log.append(f"Stress API Status: {stress_res.status_code}")
                     if stress_res.status_code == 200:
                         stress_json = stress_res.json()
                         items = stress_json if isinstance(stress_json, list) else [stress_json]
                         for item in items:
                             if isinstance(item, dict):
-                                avg_stress = item.get("avgStressLevel") or item.get("averageStressLevel")
-                                if avg_stress is not None:
-                                    data_metrics["stress_avg"] = int(avg_stress)
-                except Exception as st_err:
-                    debug_log.append(f"Chyba stresu: {st_err}")
+                                st_val = item.get("averageStressLevel") or item.get("stressScore") or item.get("value")
+                                if st_val is not None:
+                                    data_metrics["stress_avg"] = int(st_val)
+                except Exception as str_err:
+                    debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 7. Pokus o aktivity přes bezpečný endpoint
+                # 8. Historie aktivit přes ověřený search endpoint
                 try:
-                    act_url = f"https://personal.connectapi.garmin.com/activitylist-service/activities/search/dedup?start=0&limit=10"
+                    act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
                     debug_log.append(f"Activities Search Status: {act_res.status_code}")
                     if act_res.status_code == 200:
@@ -176,7 +193,7 @@ def home():
             </div>
             """
     else:
-        activities_html = '<div class="text-xs text-slate-500 py-2">Historie aktivit vyžaduje specifická oprávnění klíče.</div>'
+        activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
