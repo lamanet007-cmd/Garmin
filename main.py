@@ -67,8 +67,8 @@ def fetch_garmin_data_safe():
                     if hrv_res.status_code == 200:
                         debug_log.append("HRV staženo (200 OK)!")
                         hrv_json = hrv_res.json()
-                        val = hrv_json.get("hrvSummary", {}).get("lastNightAvg") or hrv_json.get("lastNightAvg")
-                        if val is not None:
+                        val = hrv_json.get("hrvSummary", {}).get("lastNightAvg") or hrv_json.get("hrvStatus")
+                        if isinstance(val, (int, float)):
                             data_metrics["hrv_ms"] = int(val)
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
@@ -107,21 +107,20 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Kroky a Stres ze souhrnného endpointu uživatele
+                # 6. Bezpečné pokusy pro kroky a stres přes dílčí endpointy
                 try:
-                    summary_url = f"https://personal.connectapi.garmin.com/usersummary-service/usersummary/daily/{today_str}"
-                    sum_res = requests.get(summary_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"User Summary API Status: {sum_res.status_code}")
-                    if sum_res.status_code == 200:
-                        sum_json = sum_res.json()
-                        steps = sum_json.get("totalSteps") or sum_json.get("steps")
-                        if steps is not None:
-                            data_metrics["steps"] = int(steps)
-                        stress = sum_json.get("averageStressLevel") or sum_json.get("stressScore")
-                        if stress is not None:
-                            data_metrics["stress_avg"] = int(stress)
-                except Exception as sum_err:
-                    debug_log.append(f"Chyba User Summary: {sum_err}")
+                    stats_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyStats?date={today_str}"
+                    stats_res = requests.get(stats_url, headers=api_headers, timeout=10)
+                    if stats_res.status_code == 200:
+                        stats_json = stats_res.json()
+                        steps_val = stats_json.get("totalSteps") or stats_json.get("steps")
+                        if steps_val is not None:
+                            data_metrics["steps"] = int(steps_val)
+                        stress_val = stats_json.get("averageStressLevel")
+                        if stress_val is not None:
+                            data_metrics["stress_avg"] = int(stress_val)
+                except Exception as st_err:
+                    debug_log.append(f"Poznámka ke statistikám: {st_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
