@@ -24,6 +24,7 @@ def fetch_garmin_data_safe():
         "sleep_hours": 7.5,
         "stress_avg": 25,
         "steps": 7500,
+        "fitness_age": "28",
         "activities_list": [],
     }
 
@@ -117,7 +118,6 @@ def fetch_garmin_data_safe():
                 try:
                     steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
                     steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Steps API Status: {steps_res.status_code}")
                     if steps_res.status_code == 200:
                         steps_json = steps_res.json()
                         items = steps_json if isinstance(steps_json, list) else [steps_json]
@@ -133,7 +133,6 @@ def fetch_garmin_data_safe():
                 try:
                     stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Stress API Status: {stress_res.status_code}")
                     if stress_res.status_code == 200:
                         stress_json = stress_res.json()
                         items = stress_json if isinstance(stress_json, list) else [stress_json]
@@ -145,11 +144,23 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Historie aktivit přes ověřený search endpoint
+                # 8. Fitness věk
+                try:
+                    fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
+                    fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"Fitness Age API Status: {fa_res.status_code}")
+                    if fa_res.status_code == 200:
+                        fa_json = fa_res.json()
+                        f_age = fa_json.get("fitnessAge")
+                        if f_age is not None:
+                            data_metrics["fitness_age"] = str(f_age)
+                except Exception as fa_err:
+                    debug_log.append(f"Chyba fitness věku: {fa_err}")
+
+                # 9. Historie aktivit přes ověřený search endpoint
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Activities Search Status: {act_res.status_code}")
                     if act_res.status_code == 200:
                         acts = act_res.json()
                         if isinstance(acts, list):
@@ -287,6 +298,18 @@ def home():
                         <span class="text-xl">👟</span>
                         <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Kroky</p>
                         <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2 md:col-span-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <span class="text-xl">🧬</span>
+                                <div>
+                                    <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness věk</p>
+                                    <div class="text-xl font-black text-cyan-400 mt-0.5">{garmin['fitness_age']} <small class="text-xs text-slate-500 font-normal">let</small></div>
+                                </div>
+                            </div>
+                            <span class="text-[10px] bg-slate-800 text-cyan-400 border border-slate-700 px-2.5 py-1 rounded-full font-bold">GARMIN V2</span>
+                        </div>
                     </div>
                 </div>
             </section>
