@@ -147,7 +147,7 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Fitness věk a doporučení (bezpečně zaokrouhleno)
+                # 8. Fitness věk, cíle a komponenty (vylepšené parsování)
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -161,14 +161,18 @@ def fetch_garmin_data_safe():
                         if fa_json.get("achievableFitnessAge") is not None:
                             data_metrics["achievable_fitness_age"] = str(int(round(float(fa_json.get("achievableFitnessAge")))))
                         
-                        comps = fa_json.get("components", [])
-                        if isinstance(comps, list):
+                        # Hledáme komponenty v různých možných polích
+                        comps = fa_json.get("components") or fa_json.get("fitnessAgeComponents") or fa_json.get("factors") or []
+                        if isinstance(comps, list) and len(comps) > 0:
                             parsed_comps = []
                             for c in comps:
-                                name = c.get("title") or c.get("name") or "Metrika"
-                                desc = c.get("feedback") or c.get("description") or c.get("status") or "Zlepšit tréninkovou zátěž."
-                                parsed_comps.append({"name": name, "desc": desc})
+                                name = c.get("title") or c.get("name") or c.get("componentType") or "Faktor"
+                                desc = c.get("feedback") or c.get("description") or c.get("status") or c.get("recommendation") or "Upravit trénink nebo tělesný tuk."
+                                parsed_comps.append({"name": str(name), "desc": str(desc)})
                             data_metrics["fitness_components"] = parsed_comps
+                        else:
+                            # Pokud jsou data v jiném formátu, zkusíme vytáhnout alespoň textové klíče
+                            debug_log.append(f"FitnessAge surová struktura: {str(fa_json)[:150]}")
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
@@ -231,7 +235,7 @@ def home():
             </div>
             """
     else:
-        comps_html = '<div class="text-xs text-slate-500 py-1">Žádná specifická doporučení nejsou k dispozici.</div>'
+        comps_html = '<div class="text-xs text-slate-500 py-1">Garmin vrací fitness věk bez dílčích doporučení (nebo vyžaduje zadání aktuálního % tělesného tuku v profilu).</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -327,7 +331,7 @@ def home():
                         <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
                     </div>
                     
-                    <!-- Fitness věk & Doporučení (čistý design bez přetečení) -->
+                    <!-- Fitness věk & Doporučení -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2 md:col-span-3">
                         <div class="flex flex-col md:flex-row md:items-center justify-between mb-3 pb-3 border-b border-slate-800 gap-3">
                             <div class="flex items-center space-x-3">
