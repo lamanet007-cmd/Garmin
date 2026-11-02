@@ -28,6 +28,7 @@ def fetch_garmin_data_safe():
         "fitness_age": "39",
         "achievable_fitness_age": "38",
         "respiration_avg": 14.5,
+        "intensity_curr_week": 0,
         "intensity_week": 0,
         "intensity_month": 0,
         "intensity_90d": 0,
@@ -62,7 +63,7 @@ def fetch_garmin_data_safe():
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. Dnešní klidový tep (200 OK)
+                # 2. Dnešní klidový tep (200 OK)[span_0](start_span)[span_0](end_span)
                 try:
                     hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -74,7 +75,7 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. HRV (200 OK)
+                # 3. HRV (200 OK)[span_1](start_span)[span_1](end_span)
                 try:
                     hrv_url = f"{base}/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
@@ -87,7 +88,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 4. Body Battery (200 OK)
+                # 4. Body Battery (200 OK)[span_2](start_span)[span_2](end_span)
                 try:
                     bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -105,7 +106,7 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 5. Spánek & Skóre (200 OK)
+                # 5. Spánek & Skóre (200 OK)[span_3](start_span)[span_3](end_span)
                 try:
                     sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -124,7 +125,7 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Kroky přes ověřený stats endpoint
+                # 6. Kroky přes ověřený stats endpoint[span_4](start_span)[span_4](end_span)
                 try:
                     steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
                     steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
@@ -139,7 +140,7 @@ def fetch_garmin_data_safe():
                 except Exception as st_err:
                     debug_log.append(f"Chyba kroků: {st_err}")
 
-                # 7. Stres přes ověřený stats endpoint
+                # 7. Stres přes ověřený stats endpoint[span_5](start_span)[span_5](end_span)
                 try:
                     stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
@@ -154,11 +155,15 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace, Intenzivní minuty za týden/měsíc/90d)
+                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty: aktuální týden od pondělí, 7d, měsíc, 90d)[span_6](start_span)[span_6](end_span)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
                     date_7_ago = (today_obj - datetime.timedelta(days=6)).isoformat()
+                    
+                    # Pondělí aktuálního týdne (weekday(): Pondělí = 0, Neděle = 6)
+                    days_since_monday = today_obj.weekday()
+                    current_week_start = (today_obj - datetime.timedelta(days=days_since_monday)).isoformat()
 
                     sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_90_ago}&endDate={today_str}"
                     sum_res = requests.get(sum_url, headers=api_headers, timeout=10)
@@ -166,9 +171,10 @@ def fetch_garmin_data_safe():
                         sum_json = sum_res.json()
                         rows = sum_json.get("data", []) if isinstance(sum_json, dict) else (sum_json if isinstance(sum_json, list) else [])
                         
-                        intensity_w = 0
-                        intensity_m = 0
-                        intensity_90 = 0
+                        int_curr_w = 0
+                        int_roll_w = 0
+                        int_m = 0
+                        int_90 = 0
 
                         for row in rows:
                             if isinstance(row, dict):
@@ -176,20 +182,21 @@ def fetch_garmin_data_safe():
                                 if not c_date:
                                     continue
                                 
-                                # Výpočet intenzivních minut
                                 intensity = row.get("intensityMinutes") or row.get("intensityMinuteSummary")
                                 if isinstance(intensity, dict):
                                     mod = float(intensity.get("moderate") or intensity.get("moderateMinutes") or 0)
                                     vig = float(intensity.get("vigorous") or intensity.get("vigorousMinutes") or 0)
                                     day_total = int(mod + (vig * 2))
                                     
-                                    intensity_90 += day_total
+                                    if c_date >= date_90_ago:
+                                        int_90 += day_total
                                     if c_date >= date_30_ago:
-                                        intensity_m += day_total
+                                        int_m += day_total
                                     if c_date >= date_7_ago:
-                                        intensity_w += day_total
+                                        int_roll_w += day_total
+                                    if c_date >= current_week_start:
+                                        int_curr_w += day_total
 
-                                # Dnešní respirace
                                 if c_date == today_str:
                                     resp = row.get("respiration")
                                     if isinstance(resp, dict):
@@ -197,9 +204,10 @@ def fetch_garmin_data_safe():
                                         if avg_r is not None:
                                             data_metrics["respiration_avg"] = round(float(avg_r), 1)
 
-                        data_metrics["intensity_week"] = intensity_w
-                        data_metrics["intensity_month"] = intensity_m
-                        data_metrics["intensity_90d"] = intensity_90
+                        data_metrics["intensity_curr_week"] = int_curr_w
+                        data_metrics["intensity_week"] = int_roll_w
+                        data_metrics["intensity_month"] = int_m
+                        data_metrics["intensity_90d"] = int_90
                 except Exception as sum_err:
                     debug_log.append(f"Chyba souhrnů: {sum_err}")
 
@@ -221,7 +229,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
-                # 10. Fitness věk a cíle
+                # 10. Fitness věk a cíle[span_7](start_span)[span_7](end_span)
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -236,7 +244,7 @@ def fetch_garmin_data_safe():
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 11. Historie aktivit
+                # 11. Historie aktivit[span_8](start_span)[span_8](end_span)
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
@@ -350,6 +358,19 @@ def home():
                     }}, 2000);
                 }});
             }}
+
+            function switchIntensity(type) {{
+                ['curr', 'week', 'month', '90d'].forEach(t => {{
+                    const el = document.getElementById('val-' + t);
+                    const btn = document.getElementById('btn-' + t);
+                    if (el) el.classList.add('hidden');
+                    if (btn) btn.className = 'px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-400 hover:text-white transition';
+                }});
+                const targetEl = document.getElementById('val-' + type);
+                const targetBtn = document.getElementById('btn-' + type);
+                if (targetEl) targetEl.classList.remove('hidden');
+                if (targetBtn) targetBtn.className = 'px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-600 text-white transition shadow';
+            }}
         </script>
     </head>
     <body class="bg-[#030712] text-slate-100 font-sans min-h-screen pb-12">
@@ -425,23 +446,25 @@ def home():
                         <div class="text-xl font-black text-indigo-400 mt-1">{garmin['respiration_avg']} <small class="text-xs text-slate-500 font-normal">dechů/m</small></div>
                     </div>
                     
-                    <!-- Intenzivní minuty (Týden, Měsíc, 90 dní) -->
+                    <!-- Intenzivní minuty s přepínačem (Akt. týden, 7 dní, Měsíc, 90 dní) -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2">
-                        <span class="text-xl">🔥</span>
-                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Intenzivní minuty</p>
-                        <div class="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-slate-800/80 text-center">
-                            <div>
-                                <span class="text-[9px] text-slate-400 uppercase block font-semibold">Týden</span>
-                                <span class="text-sm font-black text-amber-400">{garmin['intensity_week']} <small class="text-[10px] font-normal text-slate-500">m</small></span>
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xl">🔥</span>
+                                <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Intenzivní minuty</p>
                             </div>
-                            <div>
-                                <span class="text-[9px] text-slate-400 uppercase block font-semibold">Měsíc</span>
-                                <span class="text-sm font-black text-amber-400">{garmin['intensity_month']} <small class="text-[10px] font-normal text-slate-500">m</small></span>
+                            <div class="flex bg-black/50 p-1 rounded-xl border border-slate-800 space-x-1">
+                                <button onclick="switchIntensity('curr')" id="btn-curr" class="px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-600 text-white transition shadow">Akt. týden</button>
+                                <button onclick="switchIntensity('week')" id="btn-week" class="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-400 hover:text-white transition">7 dní</button>
+                                <button onclick="switchIntensity('month')" id="btn-month" class="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-400 hover:text-white transition">Měsíc</button>
+                                <button onclick="switchIntensity('90d')" id="btn-90d" class="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-400 hover:text-white transition">90 dní</button>
                             </div>
-                            <div>
-                                <span class="text-[9px] text-slate-400 uppercase block font-semibold">90 Dní</span>
-                                <span class="text-sm font-black text-amber-400">{garmin['intensity_90d']} <small class="text-[10px] font-normal text-slate-500">m</small></span>
-                            </div>
+                        </div>
+                        <div class="mt-3 text-center py-1">
+                            <div id="val-curr" class="intensity-view text-2xl font-black text-amber-400">{garmin['intensity_curr_week']} <small class="text-xs text-slate-500 font-normal">min (od pondělí)</small></div>
+                            <div id="val-week" class="intensity-view text-2xl font-black text-amber-400 hidden">{garmin['intensity_week']} <small class="text-xs text-slate-500 font-normal">min (posledních 7 dní)</small></div>
+                            <div id="val-month" class="intensity-view text-2xl font-black text-amber-400 hidden">{garmin['intensity_month']} <small class="text-xs text-slate-500 font-normal">min (posledních 30 dní)</small></div>
+                            <div id="val-90d" class="intensity-view text-2xl font-black text-amber-400 hidden">{garmin['intensity_90d']} <small class="text-xs text-slate-500 font-normal">min (posledních 90 dní)</small></div>
                         </div>
                     </div>
                     
