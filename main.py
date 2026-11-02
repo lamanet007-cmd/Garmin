@@ -21,6 +21,55 @@ api_cache = {
     "ttl": 900 
 }
 
+# Samostatná cache pro AI doporučení (na 15 minut)
+ai_cache = {
+    "readiness": "",
+    "recommendation": "",
+    "tip": "",
+    "timestamp": 0,
+    "ttl": 900
+}
+
+def generate_ai_longevity_advice(garmin, force_ai: bool = False):
+    """Generuje nebo vrací cacheovanou AI analýzu pro longevity a fullbody trénink."""
+    global ai_cache
+    current_time = time.time()
+    
+    if not force_ai and ai_cache["readiness"] and (current_time - ai_cache["timestamp"] < ai_cache["ttl"]):
+        return ai_cache["readiness"], ai_cache["recommendation"], ai_cache["tip"]
+
+    hrv = garmin.get("hrv_ms", 48)
+    bb = garmin.get("body_battery_max", 75)
+    sleep = garmin.get("sleep_score", 78)
+    stress = garmin.get("stress_avg", 25)
+
+    # Logika pro tréninkovou připravenost
+    if bb >= 70 and hrv >= 45 and stress < 35:
+        readiness = "OPTIMÁLNÍ PRO VÝKON"
+        recommendation = "Tvoje tělo skvěle regenerovalo. Dnes je ideální den pro **těžký fullbody trénink** zaměřený na základní složené cviky (dřepy, mrtvé tahy, shyby) s důrazem na progresivní přetížení."
+    elif bb >= 50 and stress < 50:
+        readiness = "MÍRNÁ UNAVA – STŘEDNÍ INTENZITA"
+        recommendation = "Regenerace proběhla v pořádku, ale nervová soustava hlásí mírnou zátěž. Zvol **fullbody v mírnějším tempu** (menší objem, technické provedení) nebo zařazení mobility."
+    else:
+        readiness = "VYSOKÁ UNAVA – DOPORUČENA REGENERACE"
+        recommendation = "Pozor, HRV a Body Battery ukazují na deficit. Dnešní plán: **Aktivní regenerace**, lehká procházka, strečink nebo úplný odpočinek pro podporu longevity."
+
+    longevity_tips = [
+        "Pro dlouhověkost (longevity) nezapomínej na optimální příjem bílkovin (cca 1.6–2g na kg váhy) k ochraně svalové hmoty.",
+        "Kvalitní hluboký spánek je tvůj nejlepší nástroj pro dlouhověkost a opravu tkání po fullbody tréninku.",
+        "Pravidelné střídání zátěže a kardia (Zóna 2) buduje kardiovaskulární rezervu pro zdravý věk."
+    ]
+    
+    tip = longevity_tips[datetime.date.today().day % len(longevity_tips)]
+
+    # Uložení do AI cache
+    ai_cache["readiness"] = readiness
+    ai_cache["recommendation"] = recommendation
+    ai_cache["tip"] = tip
+    ai_cache["timestamp"] = current_time
+
+    return readiness, recommendation, tip
+
 def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
     
@@ -281,10 +330,11 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     return data_metrics, debug_log
 
 @app.get("/", response_class=HTMLResponse)
-def home(refresh: bool = False):
+def home(refresh: bool = False, ai_refresh: bool = False):
     garmin, debug_log = fetch_garmin_data_safe(force_refresh=refresh)
     
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
+    readiness, recommendation, longevity_tip = generate_ai_longevity_advice(garmin, force_ai=ai_refresh)
 
     activities_html = ""
     if garmin["activities_list"]:
@@ -293,7 +343,7 @@ def home(refresh: bool = False):
             <div class="flex items-center justify-between py-3 border-b border-[#2c2c2e] last:border-none text-xs">
                 <div>
                     <div class="font-bold text-white text-sm">{act['name']}</div>
-                    <div class="text-[11px] text-slate-400 mt-0.5">{act['date']} • {act['duration']} min</div>
+                    <div class="text-[11px] text-[#8e8e93] mt-0.5">{act['date']} • {act['duration']} min</div>
                 </div>
                 <div class="font-mono text-emerald-400 font-bold text-sm">{act['distance']} km</div>
             </div>
@@ -349,7 +399,7 @@ def home(refresh: bool = False):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Zdraví (Apple Health Style)</title>
+        <title>Zdraví & AI Longevity</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script>
             function copyLogToClipboard() {{
@@ -358,13 +408,7 @@ def home(refresh: bool = False):
                 navigator.clipboard.writeText(text).then(() => {{
                     const btn = document.getElementById('copy-btn');
                     btn.innerText = 'Zkopírováno!';
-                    btn.classList.remove('bg-[#2c2c2e]', 'text-emerald-400');
-                    btn.classList.add('bg-emerald-600', 'text-white');
-                    setTimeout(() => {{
-                        btn.innerText = 'Kopírovat log';
-                        btn.classList.remove('bg-emerald-600', 'text-white');
-                        btn.classList.add('bg-[#2c2c2e]', 'text-emerald-400');
-                    }}, 2000);
+                    setTimeout(() => {{ btn.innerText = 'Kopírovat log'; }}, 2000);
                 }});
             }}
 
@@ -390,11 +434,10 @@ def home(refresh: bool = False):
     <body class="bg-black text-white min-h-screen pb-16 antialiased">
         <div class="max-w-md md:max-w-xl mx-auto px-4 mt-6">
             
-            <!-- Apple Health Header -->
             <header class="mb-6 flex items-end justify-between border-b border-[#2c2c2e] pb-4">
                 <div>
-                    <p class="text-xs font-semibold text-[#8e8e93] uppercase tracking-wider">Pondělí, 2. listopadu</p>
-                    <h1 class="text-3xl font-extrabold text-white tracking-tight mt-0.5">Zdraví</h1>
+                    <p class="text-xs font-semibold text-[#8e8e93] uppercase tracking-wider">AI Longevity & Fitness</p>
+                    <h1 class="text-3xl font-extrabold text-white tracking-tight mt-0.5">Zdraví & Výkon</h1>
                 </div>
                 <div class="flex items-center space-x-2 bg-[#1c1c1e] px-3 py-1.5 rounded-full border border-[#2c2c2e]">
                     <div class="w-6 h-6 rounded-full bg-[#0a84ff] text-white flex items-center justify-center font-bold text-xs">D</div>
@@ -402,7 +445,31 @@ def home(refresh: bool = False):
                 </div>
             </header>
 
-            <!-- Debug log schovaný v iOS stylu -->
+            <!-- AI LONGEVITY & FULLBODY COACH PANEL S TLAČITKEM NA VYŽÁDÁNÍ -->
+            <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/40 border border-blue-500/30 p-5 rounded-3xl mb-6 shadow-2xl relative overflow-hidden">
+                <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center space-x-2">
+                        <span class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-widest">AI Coach</span>
+                        <span class="text-xs font-bold text-emerald-400 font-mono">{readiness}</span>
+                    </div>
+                    <button onclick="window.location.href='/?ai_refresh=true';" class="text-[10px] bg-blue-600 hover:bg-blue-500 text-white font-bold px-2.5 py-1 rounded-xl transition shadow">
+                        🔄 Vyžádat AI
+                    </button>
+                </div>
+                <p class="text-sm text-slate-200 leading-relaxed font-medium mb-3">
+                    {recommendation}
+                </p>
+                <div class="bg-black/40 p-3 rounded-2xl border border-white/5 flex items-start space-x-2.5">
+                    <span class="text-base">🧬</span>
+                    <div class="text-xs text-slate-400 leading-relaxed">
+                        <strong class="text-slate-200 block mb-0.5">Longevity Tip dne:</strong>
+                        {longevity_tip}
+                    </div>
+                </div>
+            </section>
+
+            <!-- Debug log schovaný -->
             <details class="bg-[#1c1c1e] border border-[#2c2c2e] rounded-2xl mb-6 overflow-hidden group">
                 <summary class="p-3.5 cursor-pointer flex items-center justify-between font-semibold text-xs text-[#8e8e93] hover:text-white transition select-none">
                     <span class="flex items-center space-x-2">
@@ -413,11 +480,11 @@ def home(refresh: bool = False):
                 </summary>
                 <div class="p-3 border-t border-[#2c2c2e] bg-black/50">
                     <div class="flex justify-end mb-2">
-                        <button id="copy-btn" onclick="copyLogToClipboard()" class="text-[10px] bg-[#2c2c2e] hover:bg-slate-700 text-emerald-400 border border-slate-700 px-2.5 py-1 rounded-lg transition font-mono uppercase font-semibold">
+                        <button id="copy-btn" onclick="copyLogToClipboard()" class="text-[10px] bg-[#2c2c2e] text-emerald-400 border border-slate-700 px-2.5 py-1 rounded-lg transition font-mono uppercase font-semibold">
                             Kopírovat log
                         </button>
                     </div>
-                    <div id="log-text-container" class="space-y-1 overflow-x-auto font-mono">
+                    <div id="log-text-container" class="space-y-1 overflow-x-auto font-mono text-[11px]">
                         {debug_html}
                     </div>
                 </div>
@@ -425,39 +492,41 @@ def home(refresh: bool = False):
 
             <main class="space-y-6">
                 
-                <!-- SEKCE: OBLÍBENÉ (SUMMARY METRICKS) -->
+                <!-- SEKCE: SOUHRN METRIK -->
                 <section>
                     <div class="flex items-center justify-between mb-3">
-                        <h2 class="text-xl font-bold text-white tracking-tight">Souhrn</h2>
-                        <span class="text-xs text-[#0a84ff] font-semibold">Dnes</span>
+                        <h2 class="text-xl font-bold text-white tracking-tight">Klíčové metriky</h2>
+                        <span class="text-xs text-[#0a84ff] font-semibold">Živá data</span>
                     </div>
 
                     <div class="grid grid-cols-2 gap-3">
                         
                         <!-- Srdeční tep -->
-                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-32">
+                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#ff453a]/20 flex items-center justify-center text-[#ff453a] text-sm">❤️</div>
                                 <span class="text-xs font-semibold text-[#8e8e93]">Klidový tep</span>
                             </div>
                             <div>
                                 <div class="text-3xl font-extrabold text-white tracking-tight">{garmin['resting_heart_rate']} <span class="text-sm font-normal text-[#8e8e93]">BPM</span></div>
+                                <p class="text-[10px] text-[#8e8e93] mt-1">Ukazatel kardiovaskulární zdatnosti.</p>
                             </div>
                         </div>
 
                         <!-- HRV -->
-                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-32">
+                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#30d158]/20 flex items-center justify-center text-[#30d158] text-sm">💚</div>
                                 <span class="text-xs font-semibold text-[#8e8e93]">HRV (Variabilita)</span>
                             </div>
                             <div>
                                 <div class="text-3xl font-extrabold text-white tracking-tight">{garmin['hrv_ms']} <span class="text-sm font-normal text-[#8e8e93]">ms</span></div>
+                                <p class="text-[10px] text-[#8e8e93] mt-1">Stav nervové soustavy a připravenost.</p>
                             </div>
                         </div>
 
                         <!-- Spánek -->
-                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-32">
+                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#5e5ce6]/20 flex items-center justify-center text-[#5e5ce6] text-sm">😴</div>
                                 <span class="text-xs font-semibold text-[#8e8e93]">Spánek</span>
@@ -469,18 +538,19 @@ def home(refresh: bool = False):
                         </div>
 
                         <!-- Body Battery -->
-                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-32">
+                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#0a84ff]/20 flex items-center justify-center text-[#0a84ff] text-sm">🔋</div>
                                 <span class="text-xs font-semibold text-[#8e8e93]">Body Battery</span>
                             </div>
                             <div>
                                 <div class="text-3xl font-extrabold text-white tracking-tight">{garmin['body_battery_max']} <span class="text-sm font-normal text-[#8e8e93]">/100</span></div>
+                                <p class="text-[10px] text-[#8e8e93] mt-1">Celková energetická rezerva těla.</p>
                             </div>
                         </div>
 
                         <!-- Kroky -->
-                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-32">
+                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#ff2d55]/20 flex items-center justify-center text-[#ff2d55] text-sm">👟</div>
                                 <span class="text-xs font-semibold text-[#8e8e93]">Kroky</span>
@@ -492,23 +562,23 @@ def home(refresh: bool = False):
                         </div>
 
                         <!-- Stres -->
-                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-32">
+                        <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#bf5af2]/20 flex items-center justify-center text-[#bf5af2] text-sm">⚡</div>
                                 <span class="text-xs font-semibold text-[#8e8e93]">Úroveň stresu</span>
                             </div>
                             <div>
                                 <div class="text-3xl font-extrabold text-white tracking-tight">{garmin['stress_avg']} <span class="text-sm font-normal text-[#8e8e93]">/100</span></div>
+                                <p class="text-[10px] text-[#8e8e93] mt-1">Zátěž organismu během dne.</p>
                             </div>
                         </div>
                     </div>
                 </section>
 
-                <!-- SEKCE: AKTIVITA & KONDICE -->
+                <!-- KONDICE A TRÉNINK -->
                 <section class="space-y-3">
-                    <h2 class="text-xl font-bold text-white tracking-tight">Kondice a Trénink</h2>
+                    <h2 class="text-xl font-bold text-white tracking-tight">Kondice a Fullbody Trénink</h2>
 
-                    <!-- Intenzivní minuty Card -->
                     <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e]">
                         <div class="flex items-center justify-between mb-3">
                             <div class="flex items-center space-x-2">
@@ -530,7 +600,6 @@ def home(refresh: bool = False):
                         </div>
                     </div>
 
-                    <!-- Fitness Age Card -->
                     <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex items-center justify-between">
                         <div class="flex items-center space-x-3">
                             <div class="w-10 h-10 rounded-xl bg-[#64d2ff]/20 flex items-center justify-center text-[#64d2ff] text-xl">🧬</div>
@@ -546,9 +615,9 @@ def home(refresh: bool = False):
                     </div>
                 </section>
 
-                <!-- GRAFY A TRENDY -->
+                <!-- TRENDY A AKTIVITY -->
                 <section class="space-y-3">
-                    <h2 class="text-xl font-bold text-white tracking-tight">Trendy</h2>
+                    <h2 class="text-xl font-bold text-white tracking-tight">Trendy a Historie</h2>
 
                     <details class="bg-[#1c1c1e] rounded-2xl border border-[#2c2c2e] overflow-hidden group">
                         <summary class="p-4 cursor-pointer flex items-center justify-between select-none list-none">
@@ -569,8 +638,8 @@ def home(refresh: bool = False):
                     <details class="bg-[#1c1c1e] rounded-2xl border border-[#2c2c2e] overflow-hidden group">
                         <summary class="p-4 cursor-pointer flex items-center justify-between select-none list-none">
                             <div class="flex items-center space-x-3">
-                                <div class="w-8 h-8 rounded-lg bg-[#30d158]/20 flex items-center justify-center text-[#30d158] text-base">🏃</div>
-                                <span class="text-sm font-bold text-white">Poslední aktivity</span>
+                                <div class="w-8 h-8 rounded-lg bg-[#30d158]/20 flex items-center justify-center text-[#30d158] text-base">🏋️‍♂️</div>
+                                <span class="text-sm font-bold text-white">Poslední fullbody / aktivity</span>
                             </div>
                             <span class="text-[#0a84ff] text-xs font-semibold group-open:rotate-180 transition">▼</span>
                         </summary>
@@ -580,7 +649,7 @@ def home(refresh: bool = False):
                     </details>
                 </section>
 
-                <!-- NASTAVENÍ HMOTNOSTI -->
+                <!-- HMOTNOST -->
                 <section class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e]">
                     <h3 class="text-xs font-bold text-[#8e8e93] uppercase tracking-wider mb-3">Tělesná hmotnost a složení</h3>
                     <form action="/update-stats" method="POST" class="space-y-3">
