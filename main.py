@@ -97,9 +97,22 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 5. Stažení Stresu
+                # 5. Stažení HRV (ověřené)
                 try:
-                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/stress?date={today_str}"
+                    hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
+                    hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
+                    if hrv_res.status_code == 200:
+                        debug_log.append("HRV staženo (200 OK)!")
+                        hrv_json = hrv_res.json()
+                        status = hrv_json.get("hrvStatus")
+                        if status:
+                            data_metrics["hrv_status"] = str(status)
+                except Exception as h_err:
+                    debug_log.append(f"Chyba HRV: {h_err}")
+
+                # 6. Opravený endpoint pro stres (dailyStress)
+                try:
+                    stress_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyStress?date={today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
                     debug_log.append(f"Stress API Status: {stress_res.status_code}")
                     if stress_res.status_code == 200:
@@ -107,27 +120,12 @@ def fetch_garmin_data_safe():
                         avg_stress = stress_json.get("avgStressLevel")
                         if avg_stress is not None:
                             data_metrics["stress_avg"] = int(avg_stress)
-                            debug_log.append(f"Průměrný stres: {avg_stress}")
                 except Exception as st_err:
                     debug_log.append(f"Chyba stresu: {st_err}")
 
-                # 6. Stažení HRV
+                # 7. Opravený endpoint pro aktivity (bez parametrů data nebo s minimalistickým dotazem)
                 try:
-                    hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
-                    hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"HRV API Status: {hrv_res.status_code}")
-                    if hrv_res.status_code == 200:
-                        hrv_json = hrv_res.json()
-                        status = hrv_json.get("hrvStatus")
-                        if status:
-                            data_metrics["hrv_status"] = str(status)
-                            debug_log.append(f"HRV Status: {status}")
-                except Exception as h_err:
-                    debug_log.append(f"Chyba HRV: {h_err}")
-
-                # 7. Stažení aktivit
-                try:
-                    act_url = f"https://personal.connectapi.garmin.com/activity-service/activity/activities?startDate={today_str}&endDate={today_str}"
+                    act_url = f"https://personal.connectapi.garmin.com/activity-service/activity/activities"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
                     debug_log.append(f"Activities API Status: {act_res.status_code}")
                     if act_res.status_code == 200:
@@ -136,7 +134,6 @@ def fetch_garmin_data_safe():
                             last_act = acts[0].get("activityName") or acts[0].get("activityType", {}).get("typeKey")
                             if last_act:
                                 data_metrics["last_activity"] = str(last_act)
-                                debug_log.append(f"Poslední aktivita: {last_act}")
                 except Exception as a_err:
                     debug_log.append(f"Chyba aktivit: {a_err}")
 
