@@ -68,38 +68,28 @@ def fetch_garmin_data_safe():
                 else:
                     debug_log.append(f"Sleep API chyba: {sleep_res.status_code}")
 
-                # 3. Test endpointu pro Body Battery
-                bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/bodyBattery?date={today_str}"
-                bb_res = requests.get(bb_url, headers=api_headers, timeout=5)
-                debug_log.append(f"Body Battery API Status: {bb_res.status_code}")
-                if bb_res.status_code == 200:
-                    debug_log.append(f"BB JSON: {bb_res.text[:200]}")
+                # 3. Test obecnějšího endpointu 'dailies' místo samostatného bodyBattery
+                dailies_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailies?date={today_str}"
+                dailies_res = requests.get(dailies_url, headers=api_headers, timeout=5)
+                debug_log.append(f"Dailies API Status: {dailies_res.status_code}")
+                if dailies_res.status_code == 200:
+                    debug_log.append(f"Dailies JSON: {dailies_res.text[:300]}")
                     try:
-                        bb_json = bb_res.json()
-                        items = bb_json if isinstance(bb_json, list) else [bb_json]
+                        dailies_json = dailies_res.json()
+                        items = dailies_json if isinstance(dailies_json, list) else [dailies_json]
                         for item in items:
-                            # Hledáme hodnotu max / charged / most recent
-                            bb_val = item.get("chargedValue") or item.get("bodyBatteryValuesArray", [{}])[-1]
-                            if isinstance(bb_val, (int, float)):
-                                data_metrics["body_battery_max"] = int(bb_val)
-                                debug_log.append(f"Nalezeno Body Battery: {bb_val}")
-                    except Exception as bb_err:
-                        debug_log.append(f"Chyba parsování BB: {bb_err}")
-
-                # 4. Test endpointu pro Srdeční tep / Klidový tep
-                hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/heartRates?date={today_str}"
-                hr_res = requests.get(hr_url, headers=api_headers, timeout=5)
-                debug_log.append(f"HeartRates API Status: {hr_res.status_code}")
-                if hr_res.status_code == 200:
-                    debug_log.append(f"HR JSON: {hr_res.text[:200]}")
-                    try:
-                        hr_json = hr_res.json()
-                        rhr = hr_json.get("restingHeartRate")
-                        if rhr is not None:
-                            data_metrics["resting_heart_rate"] = int(rhr)
-                            debug_log.append(f"Nalezen klidový tep: {rhr}")
-                    except Exception as hr_err:
-                        debug_log.append(f"Chyba parsování HR: {hr_err}")
+                            if isinstance(item, dict):
+                                # Zkusíme vytáhnout klidový tep nebo body battery, pokud tam jsou
+                                rhr = item.get("restingHeartRate")
+                                if rhr is not None:
+                                    data_metrics["resting_heart_rate"] = int(rhr)
+                                    debug_log.append(f"Nalezen klidový tep v dailies: {rhr}")
+                                bb = item.get("bodyBatteryChargedValue") or item.get("bodyBatteryMostRecentValue")
+                                if bb is not None:
+                                    data_metrics["body_battery_max"] = int(bb)
+                                    debug_log.append(f"Nalezeno Body Battery v dailies: {bb}")
+                    except Exception as dailies_err:
+                        debug_log.append(f"Chyba parsování dailies: {dailies_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
@@ -186,22 +176,13 @@ def home():
                     <div class="text-xl font-black text-emerald-400 mt-1">{data['sleep_score']}<span class="text-xs text-slate-500 font-normal">/100</span></div>
                 </div>
                 <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Body Battery (Živě)</div>
+                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Body Battery</div>
                     <div class="text-xl font-black text-blue-400 mt-1">{data['body_battery_max']}<span class="text-xs text-slate-500 font-normal">/100</span></div>
                 </div>
                 <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Klidový tep (Živě)</div>
+                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Klidový tep</div>
                     <div class="text-xl font-black text-orange-400 mt-1">{data['resting_heart_rate']} <span class="text-[10px] text-slate-500 font-normal">bpm</span></div>
                 </div>
-            </div>
-
-            <div class="bg-slate-900/60 p-4 rounded-2xl border border-slate-800 mb-6 shadow-lg">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3">Zapsat ranní metry (Váha & Tuk)</h3>
-                <form action="/update-stats" method="post" class="flex gap-2">
-                    <input type="number" step="0.1" name="weight" value="{data['weight']}" required class="w-1/2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                    <input type="number" step="0.1" name="body_fat" value="{data['body_fat']}" required class="w-1/2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition">Uložit</button>
-                </form>
             </div>
 
             <div class="mt-6 text-center">
