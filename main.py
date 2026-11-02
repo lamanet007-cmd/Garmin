@@ -56,15 +56,11 @@ def fetch_garmin_data_safe():
 
             if access_token:
                 api_headers = {"Authorization": f"Bearer {access_token}"}
-                today_str = datetime.date.today().isoformat()
-                
-                today_date_obj = datetime.date.fromisoformat(today_str)
-                date_30_days_ago = (today_date_obj - datetime.timedelta(days=29)).isoformat()
-                date_90_days_ago = (today_date_obj - datetime.timedelta(days=89)).isoformat()
-                
+                today_obj = datetime.date.today()
+                today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. Klidový tep (200 OK)[span_0](start_span)[span_0](end_span)
+                # 2. Dnešní klidový tep (200 OK)[span_0](start_span)[span_0](end_span)
                 try:
                     hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -156,23 +152,17 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny (Respirace, Intenzivní minuty a Měsíční tep za 30 dní)[span_6](start_span)[span_6](end_span)
+                # 8. Denní souhrny (Respirace a Intenzivní minuty)[span_6](start_span)[span_6](end_span)
                 try:
-                    sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_30_days_ago}&endDate={today_str}"
+                    date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
+                    sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_30_ago}&endDate={today_str}"
                     sum_res = requests.get(sum_url, headers=api_headers, timeout=10)
                     if sum_res.status_code == 200:
                         sum_json = sum_res.json()
                         rows = sum_json.get("data", []) if isinstance(sum_json, dict) else (sum_json if isinstance(sum_json, list) else [])
-                        
-                        hr_history = []
                         for row in rows:
                             if isinstance(row, dict):
                                 c_date = row.get("calendarDate") or row.get("date")
-                                rhr = row.get("restingHeartRate") or row.get("averageHeartRate")
-                                if c_date and rhr is not None:
-                                    hr_history.append({"date": str(c_date)[:10], "hr": int(rhr)})
-                                
-                                # Dnešní záznam pro respiraci a intenzivní minuty
                                 if c_date and str(c_date).startswith(today_str):
                                     resp = row.get("respiration")
                                     if isinstance(resp, dict):
@@ -188,14 +178,29 @@ def fetch_garmin_data_safe():
                                         data_metrics["intensity_total"] = int(mod + (vig * 2))
                                         if goal is not None:
                                             data_metrics["intensity_goal"] = int(goal)
-
-                        if hr_history:
-                            data_metrics["hr_history"] = hr_history
-                            data_metrics["monthly_avg_hr"] = round(sum(item["hr"] for item in hr_history) / len(hr_history))
                 except Exception as sum_err:
                     debug_log.append(f"Chyba souhrnů: {sum_err}")
 
-                # 9. Fitness věk a cíle[span_7](start_span)[span_7](end_span)
+                # 9. Spolehlivé stahování 30denní historie klidového tepu pro graf
+                try:
+                    hr_history = []
+                    for i in range(29, -1, -1):
+                        d_str = (today_obj - datetime.timedelta(days=i)).isoformat()
+                        h_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={d_str}"
+                        h_res = requests.get(h_url, headers=api_headers, timeout=5)
+                        if h_res.status_code == 200:
+                            rhr_val = h_res.json().get("restingHeartRate")
+                            if rhr_val is not None:
+                                hr_history.append({"date": d_str, "hr": int(rhr_val)})
+                    
+                    if hr_history:
+                        data_metrics["hr_history"] = hr_history
+                        data_metrics["monthly_avg_hr"] = round(sum(item["hr"] for item in hr_history) / len(hr_history))
+                        debug_log.append(f"Historie tepu stažena: {len(hr_history)} dnů")
+                except Exception as h_hist_err:
+                    debug_log.append(f"Chyba historie tepu: {h_hist_err}")
+
+                # 10. Fitness věk a cíle[span_7](start_span)[span_7](end_span)
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -210,7 +215,7 @@ def fetch_garmin_data_safe():
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 10. Historie aktivit[span_8](start_span)[span_8](end_span)
+                # 11. Historie aktivit[span_8](start_span)[span_8](end_span)
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
@@ -282,13 +287,14 @@ def home():
         svg_chart = f"""
         <svg viewBox="0 0 {width} {height}" class="w-full h-24 overflow-visible">
             <polyline fill="none" stroke="#f97316" stroke-width="2.5" points="{polyline_pts}" />
-            <!-- Body -->
         """
         for i, val in enumerate(hrs):
             x = i * dx
             y = height - ((val - min_hr) / (max_hr - min_hr)) * (height - 20) - 10
-            svg_chart += f'<circle cx="{x}" cy="{y}" r="3" fill="#fb923c" />'
+            svg_chart += f'<circle cx="{x}" cy="{y}" r="3.5" fill="#fb923c" />'
         svg_chart += "</svg>"
+    else:
+        svg_chart = '<div class="text-xs text-slate-500 text-center py-4">Graf se načítá nebo data historie tepu nejsou dostupná.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
