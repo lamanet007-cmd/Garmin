@@ -55,7 +55,6 @@ def fetch_garmin_data_safe():
                 
                 if sleep_res.status_code == 200:
                     debug_log.append("Spánek stažen (200 OK)!")
-                    # Vypíšeme delší kus JSONu (600 znaků), ať vidíme celou strukturu
                     debug_log.append(f"JSON: {sleep_res.text[:600]}")
                     try:
                         sleep_json = sleep_res.json()
@@ -69,18 +68,17 @@ def fetch_garmin_data_safe():
                                         if isinstance(v, (int, float)):
                                             data_metrics["sleep_score"] = int(v)
                                         elif isinstance(v, dict):
-                                            # Pokud je to objekt, zkusíme z něj vytáhnout hodnotu
                                             sub_val = v.get("value") or v.get("overallScore")
                                             if sub_val is not None:
                                                 data_metrics["sleep_score"] = int(sub_val)
                                                 
-                                # Speciální kontrola pro případné vnořené objektové struktury
+                                # Opravené odsazení pro vnořené DTO
                                 dto = item.get("dailySleepDTO", {})
                                 if isinstance(dto, dict):
                                     for dk, dv in dto.items():
-                                    if "score" in dk.lower() and isinstance(dv, (int, float)):
-                                        data_metrics["sleep_score"] = int(dv)
-                                        debug_log.append(f"Nalezeno v DTO '{dk}': {dv}")
+                                        if "score" in dk.lower() and isinstance(dv, (int, float)):
+                                            data_metrics["sleep_score"] = int(dv)
+                                            debug_log.append(f"Nalezeno v DTO '{dk}': {dv}")
                     except Exception as parse_err:
                         debug_log.append(f"Chyba parsování: {parse_err}")
                 else:
