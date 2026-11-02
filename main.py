@@ -55,21 +55,32 @@ def fetch_garmin_data_safe():
                 
                 if sleep_res.status_code == 200:
                     debug_log.append("Spánek stažen (200 OK)!")
-                    debug_log.append(f"JSON: {sleep_res.text[:180]}")
+                    # Vypíšeme delší kus JSONu (600 znaků), ať vidíme celou strukturu
+                    debug_log.append(f"JSON: {sleep_res.text[:600]}")
                     try:
                         sleep_json = sleep_res.json()
                         items = sleep_json if isinstance(sleep_json, list) else [sleep_json]
                         for item in items:
-                            dto = item.get("dailySleepDTO", {})
-                            val = (
-                                dto.get("sleepScorePercentage", {}).get("value") or 
-                                dto.get("overallSleepScore", {}).get("value") or
-                                dto.get("score") or
-                                item.get("sleepScore")
-                            )
-                            if val is not None:
-                                data_metrics["sleep_score"] = int(val)
-                                debug_log.append(f"Nalezeno skóre spánku: {val}")
+                            if isinstance(item, dict):
+                                # Projdeme klíče a zkusíme najít skóre
+                                for k, v in item.items():
+                                    if "score" in k.lower():
+                                        debug_log.append(f"Nalezen klíč '{k}': {v}")
+                                        if isinstance(v, (int, float)):
+                                            data_metrics["sleep_score"] = int(v)
+                                        elif isinstance(v, dict):
+                                            # Pokud je to objekt, zkusíme z něj vytáhnout hodnotu
+                                            sub_val = v.get("value") or v.get("overallScore")
+                                            if sub_val is not None:
+                                                data_metrics["sleep_score"] = int(sub_val)
+                                                
+                                # Speciální kontrola pro případné vnořené objektové struktury
+                                dto = item.get("dailySleepDTO", {})
+                                if isinstance(dto, dict):
+                                    for dk, dv in dto.items():
+                                    if "score" in dk.lower() and isinstance(dv, (int, float)):
+                                        data_metrics["sleep_score"] = int(dv)
+                                        debug_log.append(f"Nalezeno v DTO '{dk}': {dv}")
                     except Exception as parse_err:
                         debug_log.append(f"Chyba parsování: {parse_err}")
                 else:
@@ -166,15 +177,6 @@ def home():
                     <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Klidový tep</div>
                     <div class="text-xl font-black text-orange-400 mt-1">{data['resting_heart_rate']} <span class="text-[10px] text-slate-500 font-normal">bpm</span></div>
                 </div>
-            </div>
-
-            <div class="bg-slate-900/60 p-4 rounded-2xl border border-slate-800 mb-6 shadow-lg">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 mb-3">Zapsat ranní metry (Váha & Tuk)</h3>
-                <form action="/update-stats" method="post" class="flex gap-2">
-                    <input type="number" step="0.1" name="weight" value="{data['weight']}" required class="w-1/2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                    <input type="number" step="0.1" name="body_fat" value="{data['body_fat']}" required class="w-1/2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition">Uložit</button>
-                </form>
             </div>
 
             <div class="mt-6 text-center">
