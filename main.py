@@ -52,7 +52,7 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
 
     # 1. Extrémně detailní stav a zhodnocení nervové soustavy
     if bb >= 70 and hrv >= 45 and stress < 35:
-        title = "MAXIMÁLNÍ ANABOLICKÁ PRIPRAVENOST & ŠPIČKOVÁ VAGÁLNÍ AKTIVITA"
+        title = "MAXIMÁLNÍ ANABOLICKÁ PŘIPRAVENOST & ŠPIČKOVÁ VAGÁLNÍ AKTIVITA"
         summary = (
             f"Dnešní biometrický obraz jednoznačně potvrzuje ideální stav organismu. S hodnotou HRV na {hrv} ms (porovnej s tvým 30denním průměrem {monthly_hrv} ms) "
             f"a maximální energetickou rezervou Body Battery na {bb}/100 disponuješ vynikající tonizací vagového nervu. "
@@ -821,7 +821,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </form>
                 </section>
 
-                <!-- AI LONGEVITY & FULLBODY COACH PANEL (MAXIMÁLNĚ ROZEPSANÝ) -->
+                <!-- AI LONGEVITY & FULLBODY COACH PANEL (JÍDELNÍČEK PŘESUNUT ÚPLNĚ DOLŮ) -->
                 <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/70 border border-blue-500/30 p-6 rounded-3xl shadow-2xl relative overflow-hidden space-y-6">
                     <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
                     
@@ -865,16 +865,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         </p>
                     </div>
 
-                    <div class="bg-emerald-950/20 p-4 rounded-2xl border border-emerald-500/20 space-y-2">
-                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
-                            <span>🥗</span>
-                            <span>Detailní doporučený jídelníček na dnešní den:</span>
-                        </div>
-                        <div class="text-xs text-slate-300 leading-relaxed space-y-1">
-                            {ai_menu}
-                        </div>
-                    </div>
-
                     <div class="bg-blue-950/30 p-4 rounded-2xl border border-blue-500/20 space-y-2">
                         <div class="flex items-center space-x-2 text-xs font-bold text-blue-300 uppercase tracking-wider">
                             <span>🧬</span>
@@ -883,6 +873,17 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         <p class="text-xs text-slate-300 leading-relaxed">
                             {ai_longevity}
                         </p>
+                    </div>
+
+                    <!-- DENNÍ JÍDELNÍČEK PŘESUNUTÝ ÚPLNĚ NA KONEC AI PANELU -->
+                    <div class="bg-emerald-950/20 p-4 rounded-2xl border border-emerald-500/20 space-y-2">
+                        <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                            <span>🥗</span>
+                            <span>Detailní doporučený jídelníček na dnešní den:</span>
+                        </div>
+                        <div class="text-xs text-slate-300 leading-relaxed space-y-1">
+                            {ai_menu}
+                        </div>
                     </div>
                 </section>
 
