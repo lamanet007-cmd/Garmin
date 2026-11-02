@@ -24,7 +24,10 @@ def fetch_garmin_data_safe():
         "sleep_hours": 7.5,
         "stress_avg": 25,
         "steps": 7500,
+        "chronological_age": 30,
         "fitness_age": "28",
+        "achievable_fitness_age": "25",
+        "fitness_components": [],
         "activities_list": [],
     }
 
@@ -144,16 +147,28 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Fitness věk
+                # 8. Fitness věk a doporučení
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
                     debug_log.append(f"Fitness Age API Status: {fa_res.status_code}")
                     if fa_res.status_code == 200:
                         fa_json = fa_res.json()
-                        f_age = fa_json.get("fitnessAge")
-                        if f_age is not None:
-                            data_metrics["fitness_age"] = str(f_age)
+                        if fa_json.get("chronologicalAge") is not None:
+                            data_metrics["chronological_age"] = int(fa_json.get("chronologicalAge"))
+                        if fa_json.get("fitnessAge") is not None:
+                            data_metrics["fitness_age"] = str(fa_json.get("fitnessAge"))
+                        if fa_json.get("achievableFitnessAge") is not None:
+                            data_metrics["achievable_fitness_age"] = str(fa_json.get("achievableFitnessAge"))
+                        
+                        comps = fa_json.get("components", [])
+                        if isinstance(comps, list):
+                            parsed_comps = []
+                            for c in comps:
+                                name = c.get("title") or c.get("name") or "Metrika"
+                                desc = c.get("feedback") or c.get("description") or c.get("status") or "Zlepšit tréninkovou zátěž."
+                                parsed_comps.append({"name": name, "desc": desc})
+                            data_metrics["fitness_components"] = parsed_comps
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
@@ -205,6 +220,18 @@ def home():
             """
     else:
         activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
+
+    comps_html = ""
+    if garmin["fitness_components"]:
+        for comp in garmin["fitness_components"]:
+            comps_html += f"""
+            <div class="bg-black/30 p-2.5 rounded-xl border border-slate-800/80 mb-2 last:mb-0 text-xs">
+                <span class="font-bold text-cyan-400 block mb-0.5">{comp['name']}</span>
+                <span class="text-slate-300 text-[11px]">{comp['desc']}</span>
+            </div>
+            """
+    else:
+        comps_html = '<div class="text-xs text-slate-500 py-1">Žádná specifická doporučení nejsou k dispozici.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -299,16 +326,28 @@ def home():
                         <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Kroky</p>
                         <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
                     </div>
+                    
+                    <!-- Fitness věk & Doporučení (zabírá celou šířku) -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2 md:col-span-3">
-                        <div class="flex items-center justify-between">
+                        <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
                             <div class="flex items-center space-x-3">
-                                <span class="text-xl">🧬</span>
+                                <span class="text-2xl">🧬</span>
                                 <div>
-                                    <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness věk</p>
-                                    <div class="text-xl font-black text-cyan-400 mt-0.5">{garmin['fitness_age']} <small class="text-xs text-slate-500 font-normal">let</small></div>
+                                    <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness věk / Reálný věk</p>
+                                    <div class="text-2xl font-black text-cyan-400 mt-0.5">
+                                        {garmin['fitness_age']} <small class="text-xs text-slate-400 font-normal">let</small> 
+                                        <span class="text-sm text-slate-500 font-normal">(skutečný: {garmin['chronological_age']} let)</span>
+                                    </div>
                                 </div>
                             </div>
-                            <span class="text-[10px] bg-slate-800 text-cyan-400 border border-slate-700 px-2.5 py-1 rounded-full font-bold">GARMIN V2</span>
+                            <div class="text-right">
+                                <p class="text-[10px] text-slate-400 uppercase font-bold">Dosažitelný cíl</p>
+                                <div class="text-lg font-bold text-emerald-400">{garmin['achievable_fitness_age']} let</div>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-bold uppercase text-slate-400 mb-2">Co je potřeba upravit (Garmin doporučení):</p>
+                            {comps_html}
                         </div>
                     </div>
                 </div>
