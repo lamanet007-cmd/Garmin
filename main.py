@@ -28,7 +28,9 @@ def fetch_garmin_data_safe():
         "fitness_age": "39",
         "achievable_fitness_age": "38",
         "respiration_avg": 14.5,
-        "intensity_total": 150,
+        "intensity_week": 0,
+        "intensity_month": 0,
+        "intensity_90d": 0,
         "intensity_goal": 150,
         "monthly_avg_hr": 55,
         "hr_history": [],
@@ -152,32 +154,52 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny (Respirace a Intenzivní minuty)
+                # 8. Denní souhrny za 90 dní (Respirace, Intenzivní minuty za týden/měsíc/90d)
                 try:
+                    date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
-                    sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_30_ago}&endDate={today_str}"
+                    date_7_ago = (today_obj - datetime.timedelta(days=6)).isoformat()
+
+                    sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_90_ago}&endDate={today_str}"
                     sum_res = requests.get(sum_url, headers=api_headers, timeout=10)
                     if sum_res.status_code == 200:
                         sum_json = sum_res.json()
                         rows = sum_json.get("data", []) if isinstance(sum_json, dict) else (sum_json if isinstance(sum_json, list) else [])
+                        
+                        intensity_w = 0
+                        intensity_m = 0
+                        intensity_90 = 0
+
                         for row in rows:
                             if isinstance(row, dict):
-                                c_date = row.get("calendarDate") or row.get("date")
-                                if c_date and str(c_date).startswith(today_str):
+                                c_date = str(row.get("calendarDate") or row.get("date") or "")[:10]
+                                if not c_date:
+                                    continue
+                                
+                                # Výpočet intenzivních minut
+                                intensity = row.get("intensityMinutes") or row.get("intensityMinuteSummary")
+                                if isinstance(intensity, dict):
+                                    mod = float(intensity.get("moderate") or intensity.get("moderateMinutes") or 0)
+                                    vig = float(intensity.get("vigorous") or intensity.get("vigorousMinutes") or 0)
+                                    day_total = int(mod + (vig * 2))
+                                    
+                                    intensity_90 += day_total
+                                    if c_date >= date_30_ago:
+                                        intensity_m += day_total
+                                    if c_date >= date_7_ago:
+                                        intensity_w += day_total
+
+                                # Dnešní respirace
+                                if c_date == today_str:
                                     resp = row.get("respiration")
                                     if isinstance(resp, dict):
                                         avg_r = resp.get("avgValue")
                                         if avg_r is not None:
                                             data_metrics["respiration_avg"] = round(float(avg_r), 1)
-                                    
-                                    intensity = row.get("intensityMinutes") or row.get("intensityMinuteSummary")
-                                    if isinstance(intensity, dict):
-                                        mod = float(intensity.get("moderate") or intensity.get("moderateMinutes") or 0)
-                                        vig = float(intensity.get("vigorous") or intensity.get("vigorousMinutes") or 0)
-                                        goal = intensity.get("goal") or intensity.get("intensityMinutesGoal")
-                                        data_metrics["intensity_total"] = int(mod + (vig * 2))
-                                        if goal is not None:
-                                            data_metrics["intensity_goal"] = int(goal)
+
+                        data_metrics["intensity_week"] = intensity_w
+                        data_metrics["intensity_month"] = intensity_m
+                        data_metrics["intensity_90d"] = intensity_90
                 except Exception as sum_err:
                     debug_log.append(f"Chyba souhrnů: {sum_err}")
 
@@ -196,7 +218,6 @@ def fetch_garmin_data_safe():
                     if hr_history:
                         data_metrics["hr_history"] = hr_history
                         data_metrics["monthly_avg_hr"] = round(sum(item["hr"] for item in hr_history) / len(hr_history))
-                        debug_log.append(f"Historie tepu stažena: {len(hr_history)} dnů")
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
@@ -264,7 +285,7 @@ def home():
     else:
         activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
 
-    # Generování SVG grafu pro 30denní klidový tep s přidanými hodnotami
+    # Generování SVG grafu pro 30denní klidový tep
     svg_chart = ""
     if garmin["hr_history"]:
         hrs = [item["hr"] for item in garmin["hr_history"]]
@@ -289,14 +310,12 @@ def home():
         
         svg_chart = f"""
         <svg viewBox="0 0 {width} {height}" class="w-full h-28 overflow-visible font-mono text-[10px]">
-            <!-- Mřížka a min/max hodnoty -->
             <line x1="0" y1="15" x2="{width}" y2="15" stroke="#1e293b" stroke-dasharray="4" />
             <text x="0" y="10" fill="#94a3b8">Max: {max_hr} bpm</text>
             
             <line x1="0" y1="{height - 15}" x2="{width}" y2="{height - 15}" stroke="#1e293b" stroke-dasharray="4" />
             <text x="0" y="{height - 3}" fill="#94a3b8">Min: {min_hr} bpm</text>
 
-            <!-- Křivka grafu -->
             <polyline fill="none" stroke="#f97316" stroke-width="2.5" points="{polyline_pts}" />
         """
         for i, val in enumerate(hrs):
@@ -405,10 +424,25 @@ def home():
                         <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Dech. frekvence</p>
                         <div class="text-xl font-black text-indigo-400 mt-1">{garmin['respiration_avg']} <small class="text-xs text-slate-500 font-normal">dechů/m</small></div>
                     </div>
+                    
+                    <!-- Intenzivní minuty (Týden, Měsíc, 90 dní) -->
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2">
                         <span class="text-xl">🔥</span>
                         <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Intenzivní minuty</p>
-                        <div class="text-xl font-black text-amber-400 mt-1">{garmin['intensity_total']} <small class="text-xs text-slate-500 font-normal">min (cíl {garmin['intensity_goal']})</small></div>
+                        <div class="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-slate-800/80 text-center">
+                            <div>
+                                <span class="text-[9px] text-slate-400 uppercase block font-semibold">Týden</span>
+                                <span class="text-sm font-black text-amber-400">{garmin['intensity_week']} <small class="text-[10px] font-normal text-slate-500">m</small></span>
+                            </div>
+                            <div>
+                                <span class="text-[9px] text-slate-400 uppercase block font-semibold">Měsíc</span>
+                                <span class="text-sm font-black text-amber-400">{garmin['intensity_month']} <small class="text-[10px] font-normal text-slate-500">m</small></span>
+                            </div>
+                            <div>
+                                <span class="text-[9px] text-slate-400 uppercase block font-semibold">90 Dní</span>
+                                <span class="text-sm font-black text-amber-400">{garmin['intensity_90d']} <small class="text-[10px] font-normal text-slate-500">m</small></span>
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Fitness věk -->
