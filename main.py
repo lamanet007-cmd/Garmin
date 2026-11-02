@@ -33,7 +33,7 @@ ai_cache = {
 }
 
 def generate_ai_longevity_advice(garmin, force_ai: bool = False):
-    """Generuje extrémně detailní, hloubkovou a obsáhlou AI analýzu pro longevity a fullbody trénink."""
+    """Generuje detailní, hloubkovou a obsáhlou AI analýzu pro longevity a fullbody trénink."""
     global ai_cache
     current_time = time.time()
     
@@ -89,7 +89,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
             f"a ochráníš své těžce vybudované svaly před odbouráním."
         )
 
-    # 2. Detailní výživová strategie pro fullbody & svaly
     protein_min = round(weight * 1.8, 1)
     protein_max = round(weight * 2.2, 1)
     nutrition_advice = (
@@ -100,7 +99,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
         f"Klíčový je i příjem hořčíku (glycinát před spánkem) a zinku pro optimální nervovou regeneraci."
     )
 
-    # 3. Hloubkový Longevity / Dlouhověkost blok
     longevity_deep_dive = (
         f"Pro maximální prodloužení zdravého věku (healthspan) a prevenci stárnutí (sarkopenie) je kombinace fullbody tréninku a precizního monitoringu klíčová. "
         f"1. **Svalová hmota jako metabolická banka:** Skeletové svalstvo slouží jako zásobárna aminokyselin a ochrana před inzulínovou rezistencí. "
@@ -109,7 +107,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
         f"který vyplavuje toxické proteiny. Chraň si spánek jako svůj nejcennější longevity asset."
     )
 
-    # Uložení do cache
     ai_cache["title"] = title
     ai_cache["summary"] = summary
     ai_cache["training_advice"] = training_advice
@@ -122,13 +119,14 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
 def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
     
+    # Ověříme, zda máme data v cache a zda ještě nevypršela jejich platnost (15 minut)
     if not force_refresh and api_cache["data"] and (current_time - api_cache["timestamp"] < api_cache["ttl"]):
         cached_data, cached_log = api_cache["data"]
-        return cached_data, ["[API CACHE] Data načtena z mezipaměti"] + cached_log
+        return cached_data, ["[API CACHE] Data a aktivity načteny z mezipaměti"] + cached_log
 
     debug_log = []
     if force_refresh:
-        debug_log.append("[API REFRESH] Obnovena čerstvá data z Garmin API.")
+        debug_log.append("[API REFRESH] Obnovena čerstvá data a aktivity z Garmin API.")
 
     data_metrics = {
         "resting_heart_rate": 56,
@@ -373,6 +371,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     except Exception as e:
         debug_log.append(f"Výjimka: {str(e)}")
 
+    # Uložení kompletních dat (včetně aktivit) do cache
     api_cache["data"] = (data_metrics, debug_log)
     api_cache["timestamp"] = current_time
 
@@ -694,7 +693,7 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </form>
                 </section>
 
-                <!-- AI LONGEVITY & FULLBODY COACH PANEL (ÚPLNĚ DOLE - ROZŠÍŘENÝ A HLOUBKOVÝ) -->
+                <!-- AI LONGEVITY & FULLBODY COACH PANEL -->
                 <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/70 border border-blue-500/30 p-6 rounded-3xl shadow-2xl relative overflow-hidden space-y-5">
                     <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
                     
@@ -708,7 +707,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         </button>
                     </div>
 
-                    <!-- 1. Hloubková analýza organismu -->
                     <div class="space-y-1.5">
                         <div class="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center space-x-2">
                             <span>📊</span>
@@ -719,7 +717,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         </p>
                     </div>
 
-                    <!-- 2. Tréninkový manuál pro Fullbody -->
                     <div class="bg-black/40 p-4 rounded-2xl border border-white/5 space-y-2">
                         <div class="flex items-center space-x-2 text-xs font-bold text-orange-400 uppercase tracking-wider">
                             <span>🏋️‍♂️</span>
@@ -730,7 +727,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         </p>
                     </div>
 
-                    <!-- 3. Makroživiny & Výživa -->
                     <div class="bg-black/40 p-4 rounded-2xl border border-white/5 space-y-2">
                         <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
                             <span>🥩</span>
@@ -741,7 +737,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         </p>
                     </div>
 
-                    <!-- 4. Longevity Deep Dive -->
                     <div class="bg-blue-950/30 p-4 rounded-2xl border border-blue-500/20 space-y-2">
                         <div class="flex items-center space-x-2 text-xs font-bold text-blue-300 uppercase tracking-wider">
                             <span>🧬</span>
