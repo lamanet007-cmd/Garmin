@@ -18,7 +18,7 @@ def fetch_garmin_data_safe():
     debug_log = []
     data_metrics = {
         "sleep_score": 75,
-        "hrv_status": "Balanced (Aktivní)",
+        "hrv_status": "Neznámý",
         "body_battery_max": 70,
         "resting_heart_rate": 56,
         "muscle_mass": 68.2,
@@ -49,9 +49,9 @@ def fetch_garmin_data_safe():
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_str = datetime.date.today().isoformat()
 
-                # 2. Stažení spánku (ověřený funkční endpoint)
+                # 2. Stažení spánku
                 try:
-                    sleep_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailySleep?date={today_str}"
+                    sleep_url = f"https://personal.connectapi.garmin.com/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=12)
                     
                     if sleep_res.status_code == 200:
@@ -66,35 +66,44 @@ def fetch_garmin_data_safe():
                     else:
                         debug_log.append(f"Sleep API chyba: {sleep_res.status_code}")
                 except Exception as s_err:
-                    debug_log.append(f"Chyba při stahování spánku: {s_err}")
+                    debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 3. Test endpointu 'body-battery' (s pomlčkou)
+                # 3. Stažení Body Battery (správná cesta)
                 try:
-                    bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/body-battery?date={today_str}"
+                    bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=12)
-                    debug_log.append(f"Body-Battery API Status: {bb_res.status_code}")
+                    debug_log.append(f"Body Battery API Status: {bb_res.status_code}")
                     if bb_res.status_code == 200:
-                        debug_log.append(f"Body-Battery JSON: {bb_res.text[:300]}")
+                        debug_log.append(f"BB JSON: {bb_res.text[:200]}...")
                         bb_json = bb_res.json()
+                        # Body battery reports vrací pole denních hodnot nebo strukturu s polem hodnot
                         items = bb_json if isinstance(bb_json, list) else [bb_json]
                         for item in items:
                             if isinstance(item, dict):
-                                bb_val = item.get("chargedValue") or item.get("bodyBatteryValuesArray", [{}])[-1]
-                                if isinstance(bb_val, (int, float)):
-                                    data_metrics["body_battery_max"] = int(bb_val)
-                                    debug_log.append(f"Nalezeno Body Battery: {bb_val}")
+                                values_array = item.get("bodyBatteryValuesArray", [])
+                                if values_array and isinstance(values_array, list):
+                                    # Poslední hodnota v poli dne bývá nejaktuálnější nebo maximum
+                                    last_val = values_array[-1]
+                                    if isinstance(last_val, list) and len(last_val) > 1:
+                                        data_metrics["body_battery_max"] = int(last_val[1])
+                                        debug_log.append(f"Nalezeno Body Battery: {last_val[1]}")
                 except Exception as bb_err:
-                    debug_log.append(f"Chyba body-battery: {bb_err}")
+                    debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 4. Test endpointu 'epochs'
+                # 4. Stažení klidového tepu (Daily Heart Rate)
                 try:
-                    epochs_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/epochs?date={today_str}"
-                    epochs_res = requests.get(epochs_url, headers=api_headers, timeout=12)
-                    debug_log.append(f"Epochs API Status: {epochs_res.status_code}")
-                    if epochs_res.status_code == 200:
-                        debug_log.append(f"Epochs JSON: {epochs_res.text[:300]}")
-                except Exception as ep_err:
-                    debug_log.append(f"Chyba epochs: {ep_err}")
+                    hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyHeartRate?date={today_str}"
+                    hr_res = requests.get(hr_url, headers=api_headers, timeout=12)
+                    debug_log.append(f"HeartRate API Status: {hr_res.status_code}")
+                    if hr_res.status_code == 200:
+                        debug_log.append(f"HR JSON: {hr_res.text[:200]}...")
+                        hr_json = hr_res.json()
+                        rhr = hr_json.get("restingHeartRate")
+                        if rhr is not None:
+                            data_metrics["resting_heart_rate"] = int(rhr)
+                            debug_log.append(f"Nalezen klidový tep: {rhr}")
+                except Exception as hr_err:
+                    debug_log.append(f"Chyba tepu: {hr_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
