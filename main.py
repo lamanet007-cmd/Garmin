@@ -82,7 +82,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. Dnešní klidový tep (200 OK)[span_0](start_span)[span_0](end_span)
+                # 2. Dnešní klidový tep (200 OK)
                 try:
                     hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -94,7 +94,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. HRV (200 OK)[span_1](start_span)[span_1](end_span)
+                # 3. HRV (200 OK)
                 try:
                     hrv_url = f"{base}/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
@@ -107,7 +107,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 4. Body Battery (200 OK)[span_2](start_span)[span_2](end_span)
+                # 4. Body Battery (200 OK)
                 try:
                     bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -125,7 +125,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 5. Spánek & Skóre (200 OK)[span_3](start_span)[span_3](end_span)
+                # 5. Spánek & Skóre (200 OK)
                 try:
                     sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -144,30 +144,30 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Kroky za posledních 30 dní přes ověřený stats endpoint[span_4](start_span)[span_4](end_span)
+                # 6. Spolehlivé stahování kroků za posledních 30 dní (jednotlivé dny přes ověřený stats endpoint)
                 try:
-                    date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
-                    steps_url = f"{base}/usersummary-service/stats/steps/daily/{date_30_ago}/{today_str}"
-                    steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
-                    if steps_res.status_code == 200:
-                        steps_json = steps_res.json()
-                        items = steps_json if isinstance(steps_json, list) else [steps_json]
-                        total_month_steps = 0
-                        for item in items:
-                            if isinstance(item, dict):
-                                c_date = str(item.get("calendarDate") or item.get("date") or "")[:10]
-                                s_val = item.get("totalSteps") or item.get("steps") or item.get("value") or 0
-                                if s_val is not None:
-                                    val_int = int(s_val)
-                                    total_month_steps += val_int
-                                    if c_date == today_str:
-                                        data_metrics["steps"] = val_int
-                        data_metrics["steps_month"] = total_month_steps
-                        debug_log.append("Měsíční kroky staženy úspěšně!")
+                    total_month_steps = 0
+                    for i in range(29, -1, -1):
+                        d_str = (today_obj - datetime.timedelta(days=i)).isoformat()
+                        steps_url = f"{base}/usersummary-service/stats/steps/daily/{d_str}/{d_str}"
+                        steps_res = requests.get(steps_url, headers=api_headers, timeout=5)
+                        if steps_res.status_code == 200:
+                            steps_json = steps_res.json()
+                            items = steps_json if isinstance(steps_json, list) else [steps_json]
+                            for item in items:
+                                if isinstance(item, dict):
+                                    s_val = item.get("totalSteps") or item.get("steps") or item.get("value") or item.get("stepCount")
+                                    if s_val is not None:
+                                        val_int = int(s_val)
+                                        total_month_steps += val_int
+                                        if d_str == today_str:
+                                            data_metrics["steps"] = val_int
+                    data_metrics["steps_month"] = total_month_steps
+                    debug_log.append(f"Kroky staženy úspěšně (dnes: {data_metrics['steps']}, měsíc: {total_month_steps})")
                 except Exception as st_err:
                     debug_log.append(f"Chyba kroků: {st_err}")
 
-                # 7. Stres přes ověřený stats endpoint[span_5](start_span)[span_5](end_span)
+                # 7. Stres přes ověřený stats endpoint
                 try:
                     stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
@@ -182,7 +182,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty)[span_6](start_span)[span_6](end_span)
+                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_7_ago = (today_obj - datetime.timedelta(days=6)).isoformat()
@@ -254,7 +254,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as h_hist_err:
                     debug_log.append(f"Chyba historie tepu: {h_hist_err}")
 
-                # 10. Fitness věk a cíle[span_7](start_span)[span_7](end_span)
+                # 10. Fitness věk a cíle
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -269,7 +269,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 11. Historie aktivit[span_8](start_span)[span_8](end_span)
+                # 11. Historie aktivit
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
