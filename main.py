@@ -38,6 +38,7 @@ def fetch_garmin_data_safe():
         "sleep_hours": 7.5,
         "stress_avg": 25,
         "steps": 7500,
+        "steps_month": 0,
         "chronological_age": 44,
         "fitness_age": "39",
         "achievable_fitness_age": "38",
@@ -139,7 +140,7 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Kroky přes ověřený stats endpoint[span_4](start_span)[span_4](end_span)
+                # 6. Dnešní kroky přes ověřený stats endpoint[span_4](start_span)[span_4](end_span)
                 try:
                     steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
                     steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
@@ -169,7 +170,7 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Denní souhrny za 90 dní (Respirace a Intenzivní minuty)[span_6](start_span)[span_6](end_span)
+                # 8. Denní souhrny za 90 dní (Respirace, Měsíční kroky a Intenzivní minuty)[span_6](start_span)[span_6](end_span)
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
                     date_30_ago = (today_obj - datetime.timedelta(days=29)).isoformat()
@@ -188,6 +189,7 @@ def fetch_garmin_data_safe():
                         int_roll_w = 0
                         int_m = 0
                         int_90 = 0
+                        steps_m = 0
 
                         for row in rows:
                             if isinstance(row, dict):
@@ -195,6 +197,12 @@ def fetch_garmin_data_safe():
                                 if not c_date:
                                     continue
                                 
+                                # Kroky za měsíc (posledních 30 dní)
+                                if c_date >= date_30_ago:
+                                    s_val = row.get("totalSteps") or row.get("steps") or 0
+                                    steps_m += int(s_val)
+
+                                # Intenzivní minuty
                                 intensity = row.get("intensityMinutes") or row.get("intensityMinuteSummary")
                                 if isinstance(intensity, dict):
                                     mod = float(intensity.get("moderate") or intensity.get("moderateMinutes") or 0)
@@ -217,6 +225,7 @@ def fetch_garmin_data_safe():
                                         if avg_r is not None:
                                             data_metrics["respiration_avg"] = round(float(avg_r), 1)
 
+                        data_metrics["steps_month"] = steps_m
                         data_metrics["intensity_curr_week"] = int_curr_w
                         data_metrics["intensity_week"] = int_roll_w
                         data_metrics["intensity_month"] = int_m
@@ -309,6 +318,9 @@ def home():
             """
     else:
         activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
+
+    # Formátování měsíčních kroků s mezerami (např. 250 400)
+    steps_month_formatted = f"{garmin['steps_month']:,}".replace(',', ' ')
 
     # Generování SVG grafu pro 30denní klidový tep
     svg_chart = ""
@@ -455,7 +467,8 @@ def home():
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
                         <span class="text-xl">👟</span>
                         <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Kroky</p>
-                        <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
+                        <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">dnes</small></div>
+                        <div class="text-[11px] text-slate-400 mt-1 font-mono">Za měsíc: <span class="text-pink-300 font-bold">{steps_month_formatted}</span></div>
                     </div>
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
                         <span class="text-xl">🫁</span>
