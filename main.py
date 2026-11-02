@@ -20,10 +20,12 @@ def fetch_garmin_data_safe():
         "resting_heart_rate": 56,
         "hrv_ms": 48,
         "body_battery_max": 75,
-        "sleep_score": 75,
+        "sleep_score": 78,
         "sleep_hours": 7.5,
         "stress_avg": 28,
         "steps": 8420,
+        "vo2_max": 45.5,
+        "fitness_age": "28 let",
         "activities_list": [],
     }
 
@@ -112,27 +114,27 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Denní statistiky (Kroky a Stres)
+                # 6. Denní souhrn (Kroky a Stres) - alternativní endpoint
                 try:
-                    stats_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyStats?date={today_str}"
-                    stats_res = requests.get(stats_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"DailyStats API Status: {stats_res.status_code}")
-                    if stats_res.status_code == 200:
-                        stats_json = stats_res.json()
-                        steps_val = stats_json.get("totalSteps") or stats_json.get("steps")
+                    summary_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailySummary?date={today_str}"
+                    sum_res = requests.get(summary_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"DailySummary API Status: {sum_res.status_code}")
+                    if sum_res.status_code == 200:
+                        sum_json = sum_res.json()
+                        steps_val = sum_json.get("totalSteps") or sum_json.get("steps")
                         if steps_val is not None:
                             data_metrics["steps"] = int(steps_val)
-                        stress_val = stats_json.get("averageStressLevel") or stats_json.get("stressScore")
+                        stress_val = sum_json.get("averageStressLevel") or sum_json.get("stressScore")
                         if stress_val is not None:
                             data_metrics["stress_avg"] = int(stress_val)
-                except Exception as st_err:
-                    debug_log.append(f"Chyba statistik (kroky/stres): {st_err}")
+                except Exception as sum_err:
+                    debug_log.append(f"Chyba DailySummary: {sum_err}")
 
-                # 7. Historie aktivit za posledních 30 dní
+                # 7. Historie aktivit za 30 dní - alternativní endpoint
                 try:
-                    act_url = f"https://personal.connectapi.garmin.com/activitylist-service/activities/search/dedup?start=0&limit=30"
+                    act_url = f"https://personal.connectapi.garmin.com/activity-service/activity/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Activities History Status: {act_res.status_code}")
+                    debug_log.append(f"Activities API Status: {act_res.status_code}")
                     if act_res.status_code == 200:
                         acts = act_res.json()
                         if isinstance(acts, list):
@@ -145,7 +147,7 @@ def fetch_garmin_data_safe():
                                 parsed_acts.append({"name": name, "date": date_time, "duration": duration, "distance": distance_km})
                             data_metrics["activities_list"] = parsed_acts
                 except Exception as a_err:
-                    debug_log.append(f"Chyba historie aktivit: {a_err}")
+                    debug_log.append(f"Chyba aktivit: {a_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
@@ -176,7 +178,7 @@ def home():
             </div>
             """
     else:
-        activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení nebo čeká na oprávnění API.</div>'
+        activities_html = '<div class="text-xs text-slate-500 py-2">Historie aktivit se načítá nebo vyžaduje rozšířená oprávnění klíče.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -258,7 +260,7 @@ def home():
                     </div>
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
                         <span class="text-xl">😴</span>
-                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Spánek ({garmin['sleep_score']} / 100)</p>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Spánek ({garmin['sleep_score']} skóre)</p>
                         <div class="text-xl font-black text-emerald-400 mt-1">{garmin['sleep_hours']} <small class="text-xs text-slate-500 font-normal">hod</small></div>
                     </div>
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
