@@ -20,9 +20,11 @@ def fetch_garmin_data_safe():
         "resting_heart_rate": 56,
         "hrv_ms": 48,
         "body_battery_max": 75,
+        "sleep_score": 75,
         "sleep_hours": 7.5,
         "stress_avg": 28,
         "steps": 8420,
+        "activities_list": [],
     }
 
     if not GARMIN_PERSONAL_API_KEY:
@@ -60,14 +62,14 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. HRV v milisekundách (200 OK)
+                # 3. HRV (200 OK)
                 try:
                     hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
                     if hrv_res.status_code == 200:
                         debug_log.append("HRV staženo (200 OK)!")
                         hrv_json = hrv_res.json()
-                        val = hrv_json.get("hrvSummary", {}).get("lastNightAvg") or hrv_json.get("hrvStatus")
+                        val = hrv_json.get("hrvSummary", {}).get("lastNightAvg")
                         if isinstance(val, (int, float)):
                             data_metrics["hrv_ms"] = int(val)
                 except Exception as h_err:
@@ -91,7 +93,7 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 5. Spánek v hodinách (200 OK)
+                # 5. Spánek & Skóre (200 OK)
                 try:
                     sleep_url = f"https://personal.connectapi.garmin.com/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -101,26 +103,49 @@ def fetch_garmin_data_safe():
                         items = sleep_json if isinstance(sleep_json, list) else [sleep_json]
                         for item in items:
                             if isinstance(item, dict):
+                                score_val = item.get("sleepScores", {}).get("overall", {}).get("value")
+                                if score_val is not None:
+                                    data_metrics["sleep_score"] = int(score_val)
                                 seconds = item.get("sleepTimeSeconds") or item.get("durationInSeconds")
                                 if seconds:
                                     data_metrics["sleep_hours"] = round(float(seconds) / 3600, 1)
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Bezpečné pokusy pro kroky a stres přes dílčí endpointy
+                # 6. Denní statistiky (Kroky a Stres)
                 try:
                     stats_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyStats?date={today_str}"
                     stats_res = requests.get(stats_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"DailyStats API Status: {stats_res.status_code}")
                     if stats_res.status_code == 200:
                         stats_json = stats_res.json()
                         steps_val = stats_json.get("totalSteps") or stats_json.get("steps")
                         if steps_val is not None:
                             data_metrics["steps"] = int(steps_val)
-                        stress_val = stats_json.get("averageStressLevel")
+                        stress_val = stats_json.get("averageStressLevel") or stats_json.get("stressScore")
                         if stress_val is not None:
                             data_metrics["stress_avg"] = int(stress_val)
                 except Exception as st_err:
-                    debug_log.append(f"Poznámka ke statistikám: {st_err}")
+                    debug_log.append(f"Chyba statistik (kroky/stres): {st_err}")
+
+                # 7. Historie aktivit za posledních 30 dní
+                try:
+                    act_url = f"https://personal.connectapi.garmin.com/activitylist-service/activities/search/dedup?start=0&limit=30"
+                    act_res = requests.get(act_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"Activities History Status: {act_res.status_code}")
+                    if act_res.status_code == 200:
+                        acts = act_res.json()
+                        if isinstance(acts, list):
+                            parsed_acts = []
+                            for a in acts:
+                                name = a.get("activityName") or a.get("activityType", {}).get("typeKey", "Aktivita")
+                                date_time = str(a.get("startTimeLocal", "")).split("T")[0]
+                                duration = round(float(a.get("duration", 0)) / 60, 1)
+                                distance_km = round(float(a.get("distance", 0)) / 1000, 2)
+                                parsed_acts.append({"name": name, "date": date_time, "duration": duration, "distance": distance_km})
+                            data_metrics["activities_list"] = parsed_acts
+                except Exception as a_err:
+                    debug_log.append(f"Chyba historie aktivit: {a_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
@@ -137,6 +162,21 @@ def home():
     garmin, debug_log = fetch_garmin_data_safe()
     
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
+
+    activities_html = ""
+    if garmin["activities_list"]:
+        for act in garmin["activities_list"]:
+            activities_html += f"""
+            <div class="flex items-center justify-between py-2.5 border-b border-slate-800/60 last:border-none text-xs">
+                <div>
+                    <div class="font-bold text-white">{act['name']}</div>
+                    <div class="text-[10px] text-slate-400">{act['date']} • {act['duration']} min</div>
+                </div>
+                <div class="font-mono text-emerald-400 font-semibold">{act['distance']} km</div>
+            </div>
+            """
+    else:
+        activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení nebo čeká na oprávnění API.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -218,7 +258,7 @@ def home():
                     </div>
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
                         <span class="text-xl">😴</span>
-                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Spánek</p>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Spánek ({garmin['sleep_score']} / 100)</p>
                         <div class="text-xl font-black text-emerald-400 mt-1">{garmin['sleep_hours']} <small class="text-xs text-slate-500 font-normal">hod</small></div>
                     </div>
                     <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
@@ -233,6 +273,17 @@ def home():
                     </div>
                 </div>
             </section>
+
+            <!-- Rozbalovací historie aktivit za posledních 30 dní -->
+            <details class="bg-slate-900 border border-slate-800 rounded-2xl mb-6 shadow-xl overflow-hidden group">
+                <summary class="p-4 cursor-pointer flex items-center justify-between font-semibold text-xs uppercase tracking-wider text-slate-300 hover:text-white transition select-none">
+                    <span>Historie aktivit (Posledních 30 dní)</span>
+                    <span class="text-emerald-400 text-sm transform group-open:rotate-180 transition">▼</span>
+                </summary>
+                <div class="px-4 pb-4 pt-1 border-t border-slate-800/80 bg-black/20 max-h-60 overflow-y-auto">
+                    {activities_html}
+                </div>
+            </details>
 
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6 shadow-xl">
                 <h3 class="text-xs font-bold uppercase text-slate-400 mb-3">Tělesné metriky & Hmotnost</h3>
