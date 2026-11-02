@@ -28,6 +28,9 @@ def fetch_garmin_data_safe():
         "fitness_age": "39",
         "achievable_fitness_age": "38",
         "fitness_components": [],
+        "respiration_avg": 14.5,
+        "intensity_total": 150,
+        "intensity_goal": 150,
         "activities_list": [],
     }
 
@@ -53,9 +56,14 @@ def fetch_garmin_data_safe():
             if access_token:
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_str = datetime.date.today().isoformat()
+                
+                # Výpočet data před 90 dny pro denní souhrny (dle Next.js předlohy)[span_1](start_span)[span_1](end_span)
+                today_date_obj = datetime.date.fromisoformat(today_str)
+                date_90_days_ago = (today_date_obj - datetime.timedelta(days=89)).isoformat()
+                
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. Klidový tep (200 OK)
+                # 2. Klidový tep (200 OK)[span_2](start_span)[span_2](end_span)
                 try:
                     hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
                     hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
@@ -67,7 +75,7 @@ def fetch_garmin_data_safe():
                 except Exception as hr_err:
                     debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. HRV (200 OK)
+                # 3. HRV (200 OK)[span_3](start_span)[span_3](end_span)
                 try:
                     hrv_url = f"{base}/hrv-service/hrv/{today_str}"
                     hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
@@ -80,7 +88,7 @@ def fetch_garmin_data_safe():
                 except Exception as h_err:
                     debug_log.append(f"Chyba HRV: {h_err}")
 
-                # 4. Body Battery (200 OK)
+                # 4. Body Battery (200 OK)[span_4](start_span)[span_4](end_span)
                 try:
                     bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -98,7 +106,7 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 5. Spánek & Skóre (200 OK)
+                # 5. Spánek & Skóre (200 OK)[span_5](start_span)[span_5](end_span)
                 try:
                     sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
                     sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
@@ -117,7 +125,7 @@ def fetch_garmin_data_safe():
                 except Exception as s_err:
                     debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 6. Kroky přes ověřený stats endpoint
+                # 6. Kroky přes ověřený stats endpoint[span_6](start_span)[span_6](end_span)
                 try:
                     steps_url = f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}"
                     steps_res = requests.get(steps_url, headers=api_headers, timeout=10)
@@ -132,7 +140,7 @@ def fetch_garmin_data_safe():
                 except Exception as st_err:
                     debug_log.append(f"Chyba kroků: {st_err}")
 
-                # 7. Stres přes ověřený stats endpoint
+                # 7. Stres přes ověřený stats endpoint[span_7](start_span)[span_7](end_span)
                 try:
                     stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
                     stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
@@ -147,7 +155,43 @@ def fetch_garmin_data_safe():
                 except Exception as str_err:
                     debug_log.append(f"Chyba stresu: {str_err}")
 
-                # 8. Fitness věk, cíle a komponenty (správné parsování klíče 'components')
+                # 8. Denní souhrny (Respirace & Intenzivní minuty dle Next.js předlohy)[span_8](start_span)[span_8](end_span)
+                try:
+                    sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_90_days_ago}&endDate={today_str}"
+                    sum_res = requests.get(sum_url, headers=api_headers, timeout=10)
+                    if sum_res.status_code == 200:
+                        sum_json = sum_res.json()
+                        rows = sum_json.get("data", []) if isinstance(sum_json, dict) else (sum_json if isinstance(sum_json, list) else [])
+                        # Najdeme dnešní záznam
+                        today_summary = None
+                        for row in rows:
+                            if isinstance(row, dict):
+                                c_date = row.get("calendarDate") or row.get("date")
+                                if c_date and str(c_date).startswith(today_str):
+                                    today_summary = row
+                                    break
+                        
+                        if today_summary:
+                            # Respirace
+                            resp = today_summary.get("respiration")
+                            if isinstance(resp, dict):
+                                avg_r = resp.get("avgValue")
+                                if avg_r is not None:
+                                    data_metrics["respiration_avg"] = round(float(avg_r), 1)
+                            
+                            # Intenzivní minuty (podpora pro různé struktury v API)[span_9](start_span)[span_9](end_span)
+                            intensity = today_summary.get("intensityMinutes") or today_summary.get("intensityMinuteSummary")
+                            if isinstance(intensity, dict):
+                                mod = float(intensity.get("moderate") or intensity.get("moderateMinutes") or 0)
+                                vig = float(intensity.get("vigorous") or intensity.get("vigorousMinutes") or 0)
+                                goal = intensity.get("goal") or intensity.get("intensityMinutesGoal")
+                                data_metrics["intensity_total"] = int(mod + (vig * 2)) # Garmin někdy počítá vigorous dvojnásobně, nebo klasický součet mod + vig
+                                if goal is not None:
+                                    data_metrics["intensity_goal"] = int(goal)
+                except Exception as sum_err:
+                    debug_log.append(f"Chyba souhrnů: {sum_err}")
+
+                # 9. Fitness věk, cíle a komponenty (robustní parsování dle Next.js)[span_10](start_span)[span_10](end_span)
                 try:
                     fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
                     fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
@@ -161,21 +205,26 @@ def fetch_garmin_data_safe():
                         if fa_json.get("achievableFitnessAge") is not None:
                             data_metrics["achievable_fitness_age"] = str(int(round(float(fa_json.get("achievableFitnessAge")))))
                         
+                        # Parsování komponent s hlubším prohledáním klíčů
                         comps = fa_json.get("components", [])
                         if isinstance(comps, list) and len(comps) > 0:
                             parsed_comps = []
                             for c in comps:
                                 if isinstance(c, dict):
-                                    name = c.get("title") or c.get("name") or c.get("componentType") or "Faktor"
-                                    desc = c.get("feedback") or c.get("description") or c.get("message") or c.get("status") or "Zlepšit tuto metriku."
-                                    parsed_comps.append({"name": str(name), "desc": str(desc)})
+                                    # Vytáhneme názvy a hodnoty/popisy přímo z objektu komponenty
+                                    c_name = c.get("title") or c.get("name") or c.get("componentType") or c.get("type") or "Faktor"
+                                    c_desc = c.get("feedback") or c.get("description") or c.get("message") or c.get("status") or c.get("recommendation")
+                                    c_val = c.get("value") or c.get("fitnessAge") or ""
+                                    
+                                    text_desc = f"{c_val} - {c_desc}" if c_val and c_desc else (c_desc or c_val or "Upravit tuto metriku pro zlepšení.")
+                                    parsed_comps.append({"name": str(c_name), "desc": str(text_desc)})
                                 elif isinstance(c, str):
                                     parsed_comps.append({"name": "Doporučení", "desc": str(c)})
                             data_metrics["fitness_components"] = parsed_comps
                 except Exception as fa_err:
                     debug_log.append(f"Chyba fitness věku: {fa_err}")
 
-                # 9. Historie aktivit přes ověřený search endpoint
+                # 10. Historie aktivit přes ověřený search endpoint[span_11](start_span)[span_11](end_span)
                 try:
                     act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
                     act_res = requests.get(act_url, headers=api_headers, timeout=10)
@@ -234,7 +283,7 @@ def home():
             </div>
             """
     else:
-        comps_html = '<div class="text-xs text-slate-500 py-1">Všechny sledované faktory jsou v pořádku nebo nevyžadují okamžitou úpravu.</div>'
+        comps_html = '<div class="text-xs text-slate-500 py-1">Garmin neposílá specifické faktory – pro optimální fitness věk udržujte pravidelný pohyb a zdravé % tělesného tuku v profilu.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -328,6 +377,16 @@ def home():
                         <span class="text-xl">👟</span>
                         <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Kroky</p>
                         <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">🫁</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Dech. frekvence</p>
+                        <div class="text-xl font-black text-indigo-400 mt-1">{garmin['respiration_avg']} <small class="text-xs text-slate-500 font-normal">dechů/m</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl col-span-2">
+                        <span class="text-xl">🔥</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Intenzivní minuty</p>
+                        <div class="text-xl font-black text-amber-400 mt-1">{garmin['intensity_total']} <small class="text-xs text-slate-500 font-normal">min (cíl {garmin['intensity_goal']})</small></div>
                     </div>
                     
                     <!-- Fitness věk & Doporučení -->
