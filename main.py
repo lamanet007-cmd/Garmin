@@ -17,19 +17,12 @@ user_stats_cache = {
 def fetch_garmin_data_safe():
     debug_log = []
     data_metrics = {
-        "sleep_score": 75,
-        "hrv_status": "Neznámý",
-        "body_battery_max": 70,
         "resting_heart_rate": 56,
+        "hrv_ms": 48,
+        "body_battery_max": 75,
+        "sleep_hours": 7.5,
         "stress_avg": 28,
-        "vo2_max": 45.5,
-        "fitness_age": "28 let",
-        "activities_list": [
-            {"name": "Silový trénink", "date": datetime.date.today().isoformat(), "duration": 60, "distance": 0.0},
-            {"name": "Ranní běh", "date": str(datetime.date.today() - datetime.timedelta(days=1)), "duration": 45, "distance": 6.2}
-        ],
-        "muscle_mass": 68.2,
-        "active_calories": 2450,
+        "steps": 8420,
     }
 
     if not GARMIN_PERSONAL_API_KEY:
@@ -55,23 +48,32 @@ def fetch_garmin_data_safe():
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_str = datetime.date.today().isoformat()
 
-                # 2. Stažení spánku (200 OK)
+                # 2. Klidový tep (200 OK)
                 try:
-                    sleep_url = f"https://personal.connectapi.garmin.com/sleep-service/sleep/dailySleep?date={today_str}"
-                    sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
-                    if sleep_res.status_code == 200:
-                        debug_log.append("Spánek stažen (200 OK)!")
-                        sleep_json = sleep_res.json()
-                        items = sleep_json if isinstance(sleep_json, list) else [sleep_json]
-                        for item in items:
-                            if isinstance(item, dict):
-                                val = item.get("sleepScores", {}).get("overall", {}).get("value")
-                                if val is not None:
-                                    data_metrics["sleep_score"] = int(val)
-                except Exception as s_err:
-                    debug_log.append(f"Chyba spánku: {s_err}")
+                    hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyHeartRate?date={today_str}"
+                    hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
+                    if hr_res.status_code == 200:
+                        debug_log.append("Klidový tep stažen (200 OK)!")
+                        rhr = hr_res.json().get("restingHeartRate")
+                        if rhr is not None:
+                            data_metrics["resting_heart_rate"] = int(rhr)
+                except Exception as hr_err:
+                    debug_log.append(f"Chyba tepu: {hr_err}")
 
-                # 3. Stažení Body Battery (200 OK)
+                # 3. HRV v milisekundách (200 OK)
+                try:
+                    hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
+                    hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
+                    if hrv_res.status_code == 200:
+                        debug_log.append("HRV staženo (200 OK)!")
+                        hrv_json = hrv_res.json()
+                        val = hrv_json.get("hrvSummary", {}).get("lastNightAvg") or hrv_json.get("lastNightAvg")
+                        if val is not None:
+                            data_metrics["hrv_ms"] = int(val)
+                except Exception as h_err:
+                    debug_log.append(f"Chyba HRV: {h_err}")
+
+                # 4. Body Battery (200 OK)
                 try:
                     bb_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
                     bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
@@ -89,50 +91,37 @@ def fetch_garmin_data_safe():
                 except Exception as bb_err:
                     debug_log.append(f"Chyba Body Battery: {bb_err}")
 
-                # 4. Stažení klidového tepu (200 OK)
+                # 5. Spánek v hodinách (200 OK)
                 try:
-                    hr_url = f"https://personal.connectapi.garmin.com/wellness-service/wellness/dailyHeartRate?date={today_str}"
-                    hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
-                    if hr_res.status_code == 200:
-                        debug_log.append("Klidový tep stažen (200 OK)!")
-                        hr_json = hr_res.json()
-                        rhr = hr_json.get("restingHeartRate")
-                        if rhr is not None:
-                            data_metrics["resting_heart_rate"] = int(rhr)
-                except Exception as hr_err:
-                    debug_log.append(f"Chyba tepu: {hr_err}")
+                    sleep_url = f"https://personal.connectapi.garmin.com/sleep-service/sleep/dailySleep?date={today_str}"
+                    sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
+                    if sleep_res.status_code == 200:
+                        debug_log.append("Spánek stažen (200 OK)!")
+                        sleep_json = sleep_res.json()
+                        items = sleep_json if isinstance(sleep_json, list) else [sleep_json]
+                        for item in items:
+                            if isinstance(item, dict):
+                                seconds = item.get("sleepTimeSeconds") or item.get("durationInSeconds")
+                                if seconds:
+                                    data_metrics["sleep_hours"] = round(float(seconds) / 3600, 1)
+                except Exception as s_err:
+                    debug_log.append(f"Chyba spánku: {s_err}")
 
-                # 5. Stažení HRV (200 OK)
+                # 6. Kroky a Stres ze souhrnného endpointu uživatele
                 try:
-                    hrv_url = f"https://personal.connectapi.garmin.com/hrv-service/hrv/{today_str}"
-                    hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
-                    if hrv_res.status_code == 200:
-                        debug_log.append("HRV staženo (200 OK)!")
-                        hrv_json = hrv_res.json()
-                        status = hrv_json.get("hrvSummary", {}).get("status") or hrv_json.get("hrvStatus")
-                        if status:
-                            data_metrics["hrv_status"] = str(status)
-                except Exception as h_err:
-                    debug_log.append(f"Chyba HRV: {h_err}")
-
-                # 6. Pokus o stažení historie aktivit s alternativní cestou
-                try:
-                    act_url = f"https://personal.connectapi.garmin.com/activitylist-service/activities?start=0&limit=30"
-                    act_res = requests.get(act_url, headers=api_headers, timeout=10)
-                    debug_log.append(f"Activities History Status: {act_res.status_code}")
-                    if act_res.status_code == 200:
-                        acts = act_res.json()
-                        if isinstance(acts, list) and len(acts) > 0:
-                            parsed_acts = []
-                            for a in acts:
-                                name = a.get("activityName") or a.get("activityType", {}).get("typeKey", "Aktivita")
-                                date_time = str(a.get("startTimeLocal", "")).split("T")[0]
-                                duration = round(float(a.get("duration", 0)) / 60, 1)
-                                distance_km = round(float(a.get("distance", 0)) / 1000, 2)
-                                parsed_acts.append({"name": name, "date": date_time, "duration": duration, "distance": distance_km})
-                            data_metrics["activities_list"] = parsed_acts
-                except Exception as a_err:
-                    debug_log.append(f"Chyba historie aktivit: {a_err}")
+                    summary_url = f"https://personal.connectapi.garmin.com/usersummary-service/usersummary/daily/{today_str}"
+                    sum_res = requests.get(summary_url, headers=api_headers, timeout=10)
+                    debug_log.append(f"User Summary API Status: {sum_res.status_code}")
+                    if sum_res.status_code == 200:
+                        sum_json = sum_res.json()
+                        steps = sum_json.get("totalSteps") or sum_json.get("steps")
+                        if steps is not None:
+                            data_metrics["steps"] = int(steps)
+                        stress = sum_json.get("averageStressLevel") or sum_json.get("stressScore")
+                        if stress is not None:
+                            data_metrics["stress_avg"] = int(stress)
+                except Exception as sum_err:
+                    debug_log.append(f"Chyba User Summary: {sum_err}")
 
             else:
                 debug_log.append("Access token nenalezen.")
@@ -148,38 +137,7 @@ def fetch_garmin_data_safe():
 def home():
     garmin, debug_log = fetch_garmin_data_safe()
     
-    data = {
-        "user": user_stats_cache["user"],
-        "weight": user_stats_cache["weight"],
-        "body_fat": user_stats_cache["body_fat"],
-        "sleep_score": garmin["sleep_score"],
-        "hrv_status": garmin["hrv_status"],
-        "body_battery_max": garmin["body_battery_max"],
-        "resting_heart_rate": garmin["resting_heart_rate"],
-        "stress_avg": garmin["stress_avg"],
-        "vo2_max": garmin["vo2_max"],
-        "fitness_age": garmin["fitness_age"],
-        "activities_list": garmin["activities_list"],
-        "muscle_mass": garmin["muscle_mass"],
-        "active_calories": garmin["active_calories"]
-    }
-
     debug_html = "".join([f"<div class='text-xs text-emerald-400 font-mono'>[API LOG] {item}</div>" for item in debug_log])
-
-    activities_html = ""
-    if data["activities_list"]:
-        for act in data["activities_list"]:
-            activities_html += f"""
-            <div class="flex items-center justify-between py-2.5 border-b border-slate-800/60 last:border-none text-xs">
-                <div>
-                    <div class="font-bold text-white">{act['name']}</div>
-                    <div class="text-[10px] text-slate-400">{act['date']} • {act['duration']} min</div>
-                </div>
-                <div class="font-mono text-emerald-400 font-semibold">{act['distance']} km</div>
-            </div>
-            """
-    else:
-        activities_html = '<div class="text-xs text-slate-500 py-2">Žádné nedávné aktivity k zobrazení.</div>'
 
     html_content = f"""
     <!DOCTYPE html>
@@ -187,7 +145,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Garmin Dashboard</title>
+        <title>GARMIN AI LIFE</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script>
             function copyLogToClipboard() {{
@@ -209,17 +167,20 @@ def home():
     </head>
     <body class="bg-[#030712] text-slate-100 font-sans min-h-screen pb-12">
         <div class="max-w-md md:max-w-2xl mx-auto px-4 mt-6">
-            <div class="mb-5 flex items-center justify-between">
-                <div>
-                    <h1 class="text-2xl font-black text-white">Garmin Dashboard</h1>
-                    <p class="text-emerald-400 text-xs mt-0.5 font-semibold">● Live Personal API Připojeno</p>
+            <header class="mb-5 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <span class="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center font-black text-white text-lg shadow-lg">G</span>
+                    <div>
+                        <h1 class="text-lg font-black text-white tracking-wide">GARMIN AI LIFE</h1>
+                        <p class="text-[10px] text-emerald-400 uppercase font-bold tracking-widest">Live Garmin Připojeno</p>
+                    </div>
                 </div>
                 <div class="text-xs bg-slate-800 text-blue-400 border border-slate-700 px-3 py-1 rounded-full font-medium">
-                    Svěřenec: <span class="text-white font-bold">{data['user']}</span>
+                    Svěřenec: <span class="text-white font-bold">{user_stats_cache['user']}</span>
                 </div>
-            </div>
+            </header>
 
-            <div class="bg-slate-900 border border-slate-800 p-3 rounded-2xl mb-5 shadow-xl">
+            <section class="bg-slate-900 border border-slate-800 p-3 rounded-2xl mb-5 shadow-xl">
                 <div class="flex items-center justify-between mb-2">
                     <h3 class="text-[10px] font-bold uppercase text-slate-400">Stav komunikace a surová data:</h3>
                     <button id="copy-btn" onclick="copyLogToClipboard()" class="text-[10px] bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 px-2.5 py-1 rounded-lg transition font-mono uppercase font-semibold">
@@ -229,44 +190,50 @@ def home():
                 <div id="log-text-container" class="bg-black/40 p-2.5 rounded-xl border border-slate-800/80 space-y-1 overflow-x-auto">
                     {debug_html}
                 </div>
-            </div>
+            </section>
 
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Spánek</div>
-                    <div class="text-xl font-black text-emerald-400 mt-1">{data['sleep_score']}<span class="text-xs text-slate-500 font-normal">/100</span></div>
+            <section class="mb-6">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <p class="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Dnešní přehled</p>
+                        <h2 class="text-xl font-black text-white">Moje metriky</h2>
+                    </div>
+                    <span class="text-[10px] bg-slate-800 text-emerald-400 border border-slate-700 px-2.5 py-1 rounded-full font-bold">GARMIN CONNECT</span>
                 </div>
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Body Battery</div>
-                    <div class="text-xl font-black text-blue-400 mt-1">{data['body_battery_max']}<span class="text-xs text-slate-500 font-normal">/100</span></div>
-                </div>
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Klidový tep</div>
-                    <div class="text-xl font-black text-orange-400 mt-1">{data['resting_heart_rate']} <span class="text-[10px] text-slate-500 font-normal">bpm</span></div>
-                </div>
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">VO2 Max</div>
-                    <div class="text-xl font-black text-cyan-400 mt-1">{data['vo2_max']}</div>
-                </div>
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Fitness Věk</div>
-                    <div class="text-xl font-black text-amber-400 mt-1">{data['fitness_age']}</div>
-                </div>
-                <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
-                    <div class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Stav HRV</div>
-                    <div class="text-sm font-bold text-teal-400 mt-1 truncate">{data['hrv_status']}</div>
-                </div>
-            </div>
 
-            <details class="bg-slate-900 border border-slate-800 rounded-2xl mb-6 shadow-xl overflow-hidden group">
-                <summary class="p-4 cursor-pointer flex items-center justify-between font-semibold text-xs uppercase tracking-wider text-slate-300 hover:text-white transition select-none">
-                    <span>Historie aktivit (Posledních 30 dní)</span>
-                    <span class="text-emerald-400 text-sm transform group-open:rotate-180 transition">▼</span>
-                </summary>
-                <div class="px-4 pb-4 pt-1 border-t border-slate-800/80 bg-black/20 max-h-60 overflow-y-auto">
-                    {activities_html}
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">❤️</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Klidový tep</p>
+                        <div class="text-xl font-black text-orange-400 mt-1">{garmin['resting_heart_rate']} <small class="text-xs text-slate-500 font-normal">bpm</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">💚</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">HRV</p>
+                        <div class="text-xl font-black text-teal-400 mt-1">{garmin['hrv_ms']} <small class="text-xs text-slate-500 font-normal">ms</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">🔋</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Body Battery</p>
+                        <div class="text-xl font-black text-blue-400 mt-1">{garmin['body_battery_max']} <small class="text-xs text-slate-500 font-normal">/ 100</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">😴</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Spánek</p>
+                        <div class="text-xl font-black text-emerald-400 mt-1">{garmin['sleep_hours']} <small class="text-xs text-slate-500 font-normal">hod</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">⚡</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Stres</p>
+                        <div class="text-xl font-black text-purple-400 mt-1">{garmin['stress_avg']} <small class="text-xs text-slate-500 font-normal">/ 100</small></div>
+                    </div>
+                    <div class="bg-gradient-to-br from-slate-900 to-slate-900/40 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                        <span class="text-xl">👟</span>
+                        <p class="text-slate-400 text-[10px] uppercase tracking-wider font-semibold mt-2">Kroky</p>
+                        <div class="text-xl font-black text-pink-400 mt-1">{garmin['steps']} <small class="text-xs text-slate-500 font-normal">kroků</small></div>
+                    </div>
                 </div>
-            </details>
+            </section>
 
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl mb-6 shadow-xl">
                 <h3 class="text-xs font-bold uppercase text-slate-400 mb-3">Tělesné metriky & Hmotnost</h3>
@@ -274,11 +241,11 @@ def home():
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block text-[10px] text-slate-400 uppercase font-semibold mb-1">Hmotnost (kg)</label>
-                            <input type="number" step="0.1" name="weight" value="{data['weight']}" class="w-full bg-black/40 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
+                            <input type="number" step="0.1" name="weight" value="{user_stats_cache['weight']}" class="w-full bg-black/40 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
                         </div>
                         <div>
                             <label class="block text-[10px] text-slate-400 uppercase font-semibold mb-1">Tělesný tuk (%)</label>
-                            <input type="number" step="0.1" name="body_fat" value="{data['body_fat']}" class="w-full bg-black/40 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
+                            <input type="number" step="0.1" name="body_fat" value="{user_stats_cache['body_fat']}" class="w-full bg-black/40 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono">
                         </div>
                     </div>
                     <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs uppercase tracking-wider rounded-xl transition shadow-lg">
