@@ -16,7 +16,6 @@ user_stats_cache = {
     "body_fat": 14.2,
 }
 
-# 1. 24hodinová cache pro historii (minulost se nemění, netahá se znova při každém kliku)
 history_cache = {
     "hr_history": [],
     "hrv_history": [],
@@ -24,10 +23,9 @@ history_cache = {
     "monthly_avg_hr": 55,
     "monthly_avg_hrv": 48,
     "timestamp": 0,
-    "ttl": 86400  # 24 hodin
+    "ttl": 86400
 }
 
-# 2. 15minutová cache pro dnešní živá data
 live_cache = {
     "data": None,
     "timestamp": 0,
@@ -186,7 +184,6 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     global history_cache
     current_time = time.time()
     
-    # Pokud nevypršela live cache (15 min) a nebyl vynucen refresh, vrátíme okamžitě
     if not force_refresh and live_cache["data"] and (current_time - live_cache["timestamp"] < live_cache["ttl"]):
         cached_data, cached_log = live_cache["data"]
         return cached_data, ["[API CACHE] Data načtena z mezipaměti (okamžitě)"] + cached_log
@@ -204,7 +201,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
         "sleep_score": 78,
         "sleep_hours": 7.5,
         "stress_avg": 25,
-        "steps": 7500,
+        "steps": 0,
         "steps_month": 0,
         "chronological_age": 44,
         "fitness_age": "39",
@@ -247,12 +244,10 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # OPRAVA: Historie se stahuje POUZE pokud je prázdná nebo starší než 24 hodin.
-                # Tlačítko synchronizace (?refresh=true) už historii násilně NEMAŽE, takže refresh je bleskový!
                 is_history_expired = not history_cache["hr_history"] or (current_time - history_cache["timestamp"] > history_cache["ttl"])
 
                 if is_history_expired:
-                    debug_log.append("[HISTORY FETCH] Stahuji 30denní historii paralelně (vypršela 24h platnost).")
+                    debug_log.append("[HISTORY FETCH] Stahuji 30denní historii paralelně.")
                     past_dates = [(today_obj - datetime.timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
 
                     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -287,12 +282,11 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                     history_cache["steps_dict"] = steps_dict
                     history_cache["steps_month"] = total_month_steps
                     history_cache["monthly_avg_hr"] = round(sum(item["hr"] for item in hr_list) / len(hr_list)) if hr_list else 55
-                    history_cache["monthly_avg_hrv"] = round(sum(item["hrv"] for item in hrv_list) / len(hrv_list)) if hrv_list else 48
+                    history_cache["monthly_avg_hrv"] = round(sum(item["hrv"] for item in hrv_list) / len(hrv_list)) if hr_list else 48
                     history_cache["timestamp"] = current_time
                 else:
-                    debug_log.append("[HISTORY CACHE] Využívám uloženou 24h historii (bleskové načtení bez čekání).")
+                    debug_log.append("[HISTORY CACHE] Využívám uloženou 24h historii.")
 
-                # Naplníme metriky z historické cache
                 data_metrics["hr_history"] = history_cache["hr_history"]
                 data_metrics["hrv_history"] = history_cache["hrv_history"]
                 data_metrics["steps_month"] = history_cache["steps_month"]
@@ -300,6 +294,24 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 data_metrics["monthly_avg_hrv"] = history_cache["monthly_avg_hrv"]
                 if data_metrics["hr_history"]:
                     data_metrics["resting_heart_rate"] = data_metrics["hr_history"][-1]["hr"]
+
+                # --- PŘÍMÉ VYŽÁDÁNÍ DNEŠNÍCH KROKŮ ---
+                try:
+                    today_steps_res = requests.get(f"{base}/usersummary-service/stats/steps/daily/{today_str}/{today_str}", headers=api_headers, timeout=5)
+                    if today_steps_res.status_code == 200:
+                        st_json = today_steps_res.json()
+                        st_items = st_json if isinstance(st_json, list) else [st_json]
+                        for item in st_items:
+                            if isinstance(item, dict):
+                                s_val = item.get("totalSteps") or item.get("steps") or item.get("value") or item.get("stepCount")
+                                if s_val is not None:
+                                    data_metrics["steps"] = int(s_val)
+                except Exception as st_err:
+                    debug_log.append(f"Chyba při stahování dnešních kroků: {st_err}")
+
+                # Pokud přímé volání neprošlo, vezme se hodnota z historické cache
+                if data_metrics["steps"] == 0 and "steps_dict" in history_cache:
+                    data_metrics["steps"] = history_cache["steps_dict"].get(today_str, 0)
 
                 # Živá data za dnešní den
                 try:
