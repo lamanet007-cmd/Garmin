@@ -21,7 +21,6 @@ api_cache = {
     "ttl": 900 
 }
 
-# Cache pro AI doporučení a jídelníček (na 15 minut)
 ai_cache = {
     "title": "",
     "summary": "",
@@ -34,7 +33,7 @@ ai_cache = {
 }
 
 def generate_ai_longevity_advice(garmin, force_ai: bool = False):
-    """Generuje extrémně rozepsanou, hloubkovou a vyčerpávající AI analýzu pro longevity a fullbody trénink."""
+    """Generuje hloubkovou AI analýzu, tréninkový manuál a denní jídelníček pro longevity a fullbody."""
     global ai_cache
     current_time = time.time()
     
@@ -50,7 +49,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
     rhr = garmin.get("resting_heart_rate", 56)
     weight = user_stats_cache.get("weight", 84.5)
 
-    # 1. Extrémně detailní stav a zhodnocení nervové soustavy
     if bb >= 70 and hrv >= 45 and stress < 35:
         title = "MAXIMÁLNÍ ANABOLICKÁ PŘIPRAVENOST & ŠPIČKOVÁ VAGÁLNÍ AKTIVITA"
         summary = (
@@ -97,7 +95,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
             f"Tento přístup ochrání tvé svaly a podpoří dlouhodobou dlouhověkost."
         )
 
-    # 2. Detailní výživová strategie
     protein_min = round(weight * 1.8, 1)
     protein_max = round(weight * 2.2, 1)
     nutrition_advice = (
@@ -110,7 +107,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
         f"Klíčový je také dostatek minerálů: hořčík (ideálně glycinát před spaním pro podporu hlubokého spánku) a zinek."
     )
 
-    # 3. Hloubkový Longevity Deep Dive
     longevity_deep_dive = (
         f"Pro maximální prodloužení zdravého věku (healthspan) a aktivní prevenci stárnutí (sarkopenie a frailty syndromu) je synergická kombinace "
         f"fullbody tréninku a precizního biometrického monitoringu tím nejúčinnějším nástrojem moderní doby. "
@@ -122,7 +118,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
         f"jedinečný 'úklidový' mechanismus, který doslova vymývá beta-amyloidní plaky a metabolický odpad. Chraň si spánek jako svůj nejcennější aktivum."
     )
 
-    # 4. Denní jídelníček na míru
     day_of_week = datetime.date.today().weekday()
     menus = [
         ("Pondělní High-Protein & Anabolický Jídelníček", 
@@ -164,7 +159,6 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
 
     menu_title, menu_content = menus[day_of_week % len(menus)]
 
-    # Uložení do cache
     ai_cache["title"] = title
     ai_cache["summary"] = summary
     ai_cache["training_advice"] = training_advice
@@ -178,14 +172,16 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
 def fetch_garmin_data_safe(force_refresh: bool = False):
     current_time = time.time()
     
+    # Cache se vrátí pouze tehdy, když nebyl vynucený refresh A v cache už nějaká data úspěšně leží
     if not force_refresh and api_cache["data"] and (current_time - api_cache["timestamp"] < api_cache["ttl"]):
         cached_data, cached_log = api_cache["data"]
         return cached_data, ["[API CACHE] Data, aktivity a historická HRV načtena z mezipaměti"] + cached_log
 
     debug_log = []
     if force_refresh:
-        debug_log.append("[API REFRESH] Obnovena čerstvá data, aktivity a historie HRV z Garmin API.")
+        debug_log.append("[API REFRESH] Vynucena obnova dat z Garmin API.")
 
+    # Výchozí struktura metrik (slouží jako fallback při chybě jednotlivých sub-requestů)
     data_metrics = {
         "resting_heart_rate": 56,
         "hrv_ms": 48,
@@ -212,8 +208,10 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     }
 
     if not GARMIN_PERSONAL_API_KEY:
-        debug_log.append("Klíč GARMIN_PERSONAL_API_KEY není nastaven.")
+        debug_log.append("Klíč GARMIN_PERSONAL_API_KEY není nastaven. Používají se výchozí hodnoty.")
         return data_metrics, debug_log
+
+    fetch_success = False
 
     try:
         token_url = "https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token"
@@ -230,6 +228,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 access_token = token_res.text.strip().replace('"', '')
 
             if access_token:
+                fetch_success = True
                 api_headers = {"Authorization": f"Bearer {access_token}"}
                 today_obj = datetime.date.today()
                 today_str = today_obj.isoformat()
@@ -441,15 +440,18 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                     debug_log.append(f"Chyba aktivit: {a_err}")
 
             else:
-                debug_log.append("Access token nenalezen.")
+                debug_log.append("Access token nenalezen v odpovědi.")
         else:
-            debug_log.append(f"Token chyba: {token_res.status_code}")
+            debug_log.append(f"Token chyba HTTP: {token_res.status_code}")
 
     except Exception as e:
-        debug_log.append(f"Výjimka: {str(e)}")
+        debug_log.append(f"Kritická výjimka při komunikaci s API: {str(e)}")
 
-    api_cache["data"] = (data_metrics, debug_log)
-    api_cache["timestamp"] = current_time
+    # Uložíme do cache POUZE tehdy, pokud token a základní tok proběhl úspěšně.
+    # Zamezíme tím uložení chybového stavu / fallback hodnot do cache na 15 minut.
+    if fetch_success:
+        api_cache["data"] = (data_metrics, debug_log)
+        api_cache["timestamp"] = current_time
 
     return data_metrics, debug_log
 
@@ -477,7 +479,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
 
     steps_month_formatted = f"{garmin['steps_month']:,}".replace(',', ' ')
 
-    # SVG graf pro tep
     svg_chart = ""
     if garmin["hr_history"]:
         hrs = [item["hr"] for item in garmin["hr_history"]]
@@ -515,7 +516,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
     else:
         svg_chart = '<div class="text-xs text-slate-500 text-center py-4">Graf historie tepu se načítá.</div>'
 
-    # SVG graf pro HRV
     svg_hrv_chart = ""
     if garmin["hrv_history"]:
         hrvs = [item["hrv"] for item in garmin["hrv_history"]]
@@ -605,7 +605,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                 </div>
             </header>
 
-            <!-- Debug log schovaný nahoře -->
             <details class="bg-[#1c1c1e] border border-[#2c2c2e] rounded-2xl mb-6 overflow-hidden group">
                 <summary class="p-3.5 cursor-pointer flex items-center justify-between font-semibold text-xs text-[#8e8e93] hover:text-white transition select-none">
                     <span class="flex items-center space-x-2">
@@ -628,7 +627,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
 
             <main class="space-y-6">
                 
-                <!-- SEKCE: SOUHRN METRIK -->
                 <section>
                     <div class="flex items-center justify-between mb-3">
                         <h2 class="text-xl font-bold text-white tracking-tight">Klíčové metriky</h2>
@@ -636,8 +634,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </div>
 
                     <div class="grid grid-cols-2 gap-3">
-                        
-                        <!-- Srdeční tep -->
                         <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#ff453a]/20 flex items-center justify-center text-[#ff453a] text-sm">❤️</div>
@@ -649,7 +645,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                             </div>
                         </div>
 
-                        <!-- HRV -->
                         <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#30d158]/20 flex items-center justify-center text-[#30d158] text-sm">💚</div>
@@ -661,7 +656,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                             </div>
                         </div>
 
-                        <!-- Spánek -->
                         <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#5e5ce6]/20 flex items-center justify-center text-[#5e5ce6] text-sm">😴</div>
@@ -673,7 +667,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                             </div>
                         </div>
 
-                        <!-- Body Battery -->
                         <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#0a84ff]/20 flex items-center justify-center text-[#0a84ff] text-sm">🔋</div>
@@ -685,7 +678,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                             </div>
                         </div>
 
-                        <!-- Kroky -->
                         <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#ff2d55]/20 flex items-center justify-center text-[#ff2d55] text-sm">👟</div>
@@ -697,7 +689,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                             </div>
                         </div>
 
-                        <!-- Stres -->
                         <div class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e] flex flex-col justify-between h-36">
                             <div class="flex items-center space-x-2">
                                 <div class="w-7 h-7 rounded-lg bg-[#bf5af2]/20 flex items-center justify-center text-[#bf5af2] text-sm">⚡</div>
@@ -711,7 +702,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </div>
                 </section>
 
-                <!-- KONDICE A TRÉNINK -->
                 <section class="space-y-3">
                     <h2 class="text-xl font-bold text-white tracking-tight">Kondice a Fullbody Trénink</h2>
 
@@ -751,7 +741,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </div>
                 </section>
 
-                <!-- TRENDY A HISTORIE -->
                 <section class="space-y-3">
                     <h2 class="text-xl font-bold text-white tracking-tight">Trendy a Historie</h2>
 
@@ -801,7 +790,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </details>
                 </section>
 
-                <!-- HMOTNOST -->
                 <section class="bg-[#1c1c1e] p-4 rounded-2xl border border-[#2c2c2e]">
                     <h3 class="text-xs font-bold text-[#8e8e93] uppercase tracking-wider mb-3">Tělesná hmotnost a složení</h3>
                     <form action="/update-stats" method="POST" class="space-y-3">
@@ -821,7 +809,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                     </form>
                 </section>
 
-                <!-- AI LONGEVITY & FULLBODY COACH PANEL (JÍDELNÍČEK PŘESUNUT ÚPLNĚ DOLŮ) -->
                 <section class="bg-gradient-to-br from-[#1c1c1e] to-[#2c2c2e]/70 border border-blue-500/30 p-6 rounded-3xl shadow-2xl relative overflow-hidden space-y-6">
                     <div class="absolute -right-6 -bottom-6 text-7xl opacity-10">🤖</div>
                     
@@ -875,7 +862,6 @@ def home(refresh: bool = False, ai_refresh: bool = False):
                         </p>
                     </div>
 
-                    <!-- DENNÍ JÍDELNÍČEK PŘESUNUTÝ ÚPLNĚ NA KONEC AI PANELU -->
                     <div class="bg-emerald-950/20 p-4 rounded-2xl border border-emerald-500/20 space-y-2">
                         <div class="flex items-center space-x-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
                             <span>🥗</span>
