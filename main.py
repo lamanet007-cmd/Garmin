@@ -16,7 +16,7 @@ user_stats_cache = {
     "body_fat": 14.2,
 }
 
-# 1. Oddělená cache pro historii (platí 24 hodin, protože minulost se nemění)
+# 1. 24hodinová cache pro historii (minulost se nemění, netahá se znova při každém kliku)
 history_cache = {
     "hr_history": [],
     "hrv_history": [],
@@ -27,7 +27,7 @@ history_cache = {
     "ttl": 86400  # 24 hodin
 }
 
-# 2. Cache pro dnešní živá data (platí 15 minut)
+# 2. 15minutová cache pro dnešní živá data
 live_cache = {
     "data": None,
     "timestamp": 0,
@@ -186,14 +186,14 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     global history_cache
     current_time = time.time()
     
-    # 1. Pokud máme platná živá data (v rámci 15 minut) a nenutili jsme explicitní refresh, vrátíme je
+    # Pokud nevypršela live cache (15 min) a nebyl vynucen refresh, vrátíme okamžitě
     if not force_refresh and live_cache["data"] and (current_time - live_cache["timestamp"] < live_cache["ttl"]):
         cached_data, cached_log = live_cache["data"]
-        return cached_data, ["[API CACHE] Živá i historická data načtena z mezipaměti (okamžitě)"] + cached_log
+        return cached_data, ["[API CACHE] Data načtena z mezipaměti (okamžitě)"] + cached_log
 
     debug_log = []
     if force_refresh:
-        debug_log.append("[API REFRESH] Vynucena obnova dat z Garmin API.")
+        debug_log.append("[API REFRESH] Aktualizuji dnešní živá data z Garminu.")
 
     data_metrics = {
         "resting_heart_rate": 56,
@@ -247,12 +247,12 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                # 2. INTELIGENTNÍ HISTORIE: Zkontrolujeme, zda máme starší historii v 24h cache.
-                # Pokud vypršela nebo je prázdná, stáhneme ji paralelně. Minulost se přece nemění!
-                is_history_expired = force_refresh or not history_cache["hr_history"] or (current_time - history_cache["timestamp"] > history_cache["ttl"])
+                # OPRAVA: Historie se stahuje POUZE pokud je prázdná nebo starší než 24 hodin.
+                # Tlačítko synchronizace (?refresh=true) už historii násilně NEMAŽE, takže refresh je bleskový!
+                is_history_expired = not history_cache["hr_history"] or (current_time - history_cache["timestamp"] > history_cache["ttl"])
 
                 if is_history_expired:
-                    debug_log.append("[HISTORY REFRESH] Minulost vypršela nebo je vynucena – stahuji 30denní historii paralelně.")
+                    debug_log.append("[HISTORY FETCH] Stahuji 30denní historii paralelně (vypršela 24h platnost).")
                     past_dates = [(today_obj - datetime.timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
 
                     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -282,7 +282,6 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                                 hr_list.append(res)
                         hr_list.sort(key=lambda x: x["date"])
 
-                    # Uložíme do 24hodinové historické cache
                     history_cache["hr_history"] = hr_list
                     history_cache["hrv_history"] = hrv_list
                     history_cache["steps_dict"] = steps_dict
@@ -291,7 +290,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                     history_cache["monthly_avg_hrv"] = round(sum(item["hrv"] for item in hrv_list) / len(hrv_list)) if hrv_list else 48
                     history_cache["timestamp"] = current_time
                 else:
-                    debug_log.append("[HISTORY CACHE] Využívám uloženou 24h historii (minulost se nemění, šetříme API requesty).")
+                    debug_log.append("[HISTORY CACHE] Využívám uloženou 24h historii (bleskové načtení bez čekání).")
 
                 # Naplníme metriky z historické cache
                 data_metrics["hr_history"] = history_cache["hr_history"]
@@ -302,7 +301,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 if data_metrics["hr_history"]:
                     data_metrics["resting_heart_rate"] = data_metrics["hr_history"][-1]["hr"]
 
-                # 3. Dnešní živá data (stahujeme vždy, protože dnešek se vyvíjí)
+                # Živá data za dnešní den
                 try:
                     hrv_res = requests.get(f"{base}/hrv-service/hrv/{today_str}", headers=api_headers, timeout=5)
                     if hrv_res.status_code == 200:
