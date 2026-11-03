@@ -2,6 +2,7 @@ import os
 import datetime
 import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
 
@@ -15,10 +16,22 @@ user_stats_cache = {
     "body_fat": 14.2,
 }
 
-api_cache = {
+# 1. Oddělená cache pro historii (platí 24 hodin, protože minulost se nemění)
+history_cache = {
+    "hr_history": [],
+    "hrv_history": [],
+    "steps_month": 0,
+    "monthly_avg_hr": 55,
+    "monthly_avg_hrv": 48,
+    "timestamp": 0,
+    "ttl": 86400  # 24 hodin
+}
+
+# 2. Cache pro dnešní živá data (platí 15 minut)
+live_cache = {
     "data": None,
     "timestamp": 0,
-    "ttl": 900 
+    "ttl": 900
 }
 
 ai_cache = {
@@ -63,98 +76,61 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
             f"Tvá nervová soustava dokáže efektivně rekrutovat vysokoprahové motorické jednotky typu II (rychlá svalová vlákna). "
             f"Zavěs do tréninkového plánu 4–5 těžkých složených cviků: hluboké dřepy nebo trap-bar mrtvé tahy, shyby na hrazdě se závažím, "
             f"tlaky na lavičce (bench press) a vojenské tlaky nad hlavu (overhead press). "
-            f"Pracuj v intenzitě 80–87 % 1RM, proveď 4–5 pracovních sérií po 5–6 opakování s delšími pauzami (2,5 až 3 minuty) pro úplné obnovení ATP-CP systému. "
-            f"Tento tréninkový impuls ti přinese maximální signál pro svalovou hypertrofii a růst síly."
+            f"Pracuj v intenzitě 80–87 % 1RM, proveď 4–5 pracovních sérií po 5–6 opakování s delšími pauzami (2,5 až 3 minuty) pro úplné obnovení ATP-CP systému."
         )
     elif bb >= 50 and stress < 50:
         title = "STABILNÍ ADAPTACE / STŘEDNÍ INTENZITA A OPTIMALIZACE R.O.M."
         summary = (
             f"Biometrická data ukazují standardní, vyrovnaný stav (Body Battery {bb}/100, HRV {hrv} ms, průměrný stres {stress}/100). "
             f"Organismus úspěšně zvládl noční zotavení, ale vnitřní prostředí naráží na běžné denní stresory a mírnou únavu z minulých dní. "
-            f"Nejedná se o deficit, který by vyžadoval úplné volno, ale centrální nervová soustava vyžaduje citlivější přístup. "
-            f"Hladina kortizolu je stabilní, avšak rezerva pro maximální výkony do selhání je omezená."
+            f"Nejedná se o deficit, který by vyžadoval úplné volno, ale centrální nervová soustava vyžaduje citlivější přístup."
         )
         training_advice = (
-            f"Naplánuj si **fullbody trénink zaměřený na hypertrofii, svalové procítění (mind-muscle connection) a plný rozsah pohybu (R.O.M.)**. "
+            f"Naplánuj si **fullbody trénink zaměřený na hypertrofii, svalové procítění a plný rozsah pohybu (R.O.M.)**. "
             f"Drž se v intenzitě RPE 7–8 (v rezervě 2–3 opakování do technického selhání). Zvol 3–4 série o 8–12 opakování. "
-            f"Vyhni se maximálním vahám, které drancují CNS. Místo toho zařaď jednoručky, kladky a unilaterální cviky (bulharské dřepy, výpady), "
-            f"které umožní dokonalou kontrakci svalových vláken s minimálním zatížením páteře a kloubů."
+            f"Vyhni se maximálním vahám, které drancují CNS. Zařaď jednoručky, kladky a unilaterální cviky."
         )
     else:
         title = "AKUTNÍ SIGNÁL K REGENERACI – OCHRANA LONGEVITY & CNS"
         summary = (
             f"Varování: Tvoje tělo vysílá jasné signály o vyčerpání. HRV pokleslo na {hrv} ms, Body Battery stagnuje na nízké hodnotě ({bb}/100) "
             f"a průměrný denní stres {stress}/100 ukazuje, že organismus bojuje s vnitřním deficitem. "
-            f"Pokus o těžký silový trénink v tomto stavu by vedl k masivnímu vyplavení katabolického hormonu kortizolu, odbourávání svalové hmoty (proteolýza) "
-            f"a dlouhodobému poklesu imunity. Tělo potřebuje adaptaci a odpočinek, nikoliv další stresový faktor."
+            f"Pokus o těžký silový trénink v tomto stavu by vedl k masivnímu vyplavení kortizolu a katabolismu svalové hmoty."
         )
         training_advice = (
-            f"Dnešní den **kategoricky vynechej veškeré těžké železo a silové cviky**. Přepni do režimu active recovery (aktivní regenerace). "
-            f"Absolvuj 45–60 minut vědomé chůze v Zóně 1 (tepová frekvence striktně pod 110 BPM), což podpoří lymfatický systém a urychlí odplavení laktátu. "
-            f"Doplň to 30 minutami hlubokého strečinku, myofasciálního uvolnění (foam roller) nebo mobilizačních cvičení zaměřených na kyčle a hrudní páteř. "
-            f"Tento přístup ochrání tvé svaly a podpoří dlouhodobou dlouhověkost."
+            f"Dnešní den **kategoricky vynechej veškeré těžké železo a silové cviky**. Přepni do režimu active recovery. "
+            f"Absolvuj 45–60 minut vědomé chůze v Zóně 1 (tepová frekvence striktně pod 110 BPM) a 30 minut hlubokého strečinku či mobilizace."
         )
 
     protein_min = round(weight * 1.8, 1)
     protein_max = round(weight * 2.2, 1)
     nutrition_advice = (
         f"Jako cvičenec na fullbody režimu stimuluješ celé tělo najednou, což znamená, že svalová bílkovinná syntéza (MPS) "
-        f"zůstává výrazně zvýšená přibližně 48 hodin po tréninku. Měl bys denně bez výjimky cílit na **{protein_min} až {protein_max} gramů "
-        f"vysoce kvalitních bílkovin** (cca 1.8–2.2 g na kg tělesné hmotnosti), rovnoměrně rozložených do 4 jídel (cca 35–45 g na porci) "
-        f"pro zajištění optimální hladiny esenciální aminokyseliny leucinu v krvi. "
-        f"Nezapomínej na komplexní sacharidy (ovesné vločky, rýže, batáty, quinoa) k doplnění svalového glykogenu a zdravé tuky (omega-3 mastné kyseliny, "
-        f"extra panenský olivový olej, avokádo, ořechy), které jsou nezbytné pro endokrinní systém a produkci testosteronu. "
-        f"Klíčový je také dostatek minerálů: hořčík (ideálně glycinát před spaním pro podporu hlubokého spánku) a zinek."
+        f"zůstává výrazně zvýšená přibližně 48 hodin po tréninku. Cílíš na **{protein_min} až {protein_max} gramů bílkovin denně** "
+        f"(cca 1.8–2.2 g na kg tělesné hmotnosti), rozložených do 4 jídel. Nezapomeň na komplexní sacharidy, zdravé tuky a hořčík (glycinát před spaním)."
     )
 
     longevity_deep_dive = (
-        f"Pro maximální prodloužení zdravého věku (healthspan) a aktivní prevenci stárnutí (sarkopenie a frailty syndromu) je synergická kombinace "
-        f"fullbody tréninku a precizního biometrického monitoringu tím nejúčinnějším nástrojem moderní doby. "
-        f"1. **Svalová hmota jako endokrinní a metabolická banka:** Skeletové svalstvo neslouží jen k pohybu, ale funguje jako žláza vylučující myokiny, "
-        f"které snižují zánětlivost v těle a chrání před inzulínovou rezistencí a diabetes 2. typu. "
-        f"2. **Kardiovaskulární rezerva a mitochondriální hustota (Zóna 2):** Pravidelný pohyb v nízké intenzitě přímo stimuluje biogenezi mitochondrií v buňkách, "
-        f"což zlepšuje efektivitu spalování tuků a buněčné dýchání. "
-        f"3. **Neuroprotekce a spánková architektura:** Během hlubokého spánku (který u tebe momentálně vykazuje skóre {sleep}/100) se aktivuje glymfatický systém mozku – "
-        f"jedinečný 'úklidový' mechanismus, který doslova vymývá beta-amyloidní plaky a metabolický odpad. Chraň si spánek jako svůj nejcennější aktivum."
+        f"Pro maximální prodloužení zdravého věku (healthspan) kombinuj fullbody trénink, mitochondriální kardio v Zóně 2 "
+        f"a spánek (skóre {sleep}/100), během kterého se aktivuje glymfatický systém mozku pro odplavení metabolického odpadu."
     )
 
     day_of_week = datetime.date.today().weekday()
     menus = [
         ("Pondělní High-Protein & Anabolický Jídelníček", 
-         "• **Snídaně:** Míchaná vajíčka z 4 celých vajec na troše másla, 2 plátky celozrnného žitného chleba, čerstvé avokádo (1/2 ks) a velká porce zeleniny (paprika, rajčata).<br>"
-         "• **Svačina:** Řecký jogurt (150g, 2% tuku) smíchaný s 30g syrovátkového proteinu (whey) a hrstí lesního ovoce (borůvky/maliny).<br>"
-         "• **Oběd:** Hovězí steak ze zadního nebo hovězí plece (200g), porce domácího batátového pyré s olivovým olejem, pečená brokolice na pásech.<br>"
-         "• **Večeře:** Pečený čerstvý losos (180g), sypaný quinoou, velký míchaný listový salát (polníček, rucola) zálit olivovým olejem a citrónovou šťávou."),
+         "• **Snídaně:** Míchaná vajíčka (4 ks) na másle, žitný chléb, avokádo a zelenina.<br>• **Svačina:** Řecký jogurt s proteinem a lesním ovocem.<br>• **Oběd:** Hovězí steak (200g), batátové pyré, brokolice.<br>• **Večeře:** Pečený losos (180g), quinoa, listový salát."),
         ("Úterní Fullbody Regenerační Jídelníček", 
-         "• **Snídaně:** Hutná ovesná kaše z celozrnných vloček (80g) uvařená ve vodě/mléku, vmíchaná 1 odměrka proteinu, lžíce 100% arašídového másla a nakrájený banán.<br>"
-         "• **Svačina:** Polotučný tvaroh (250g) oslazený troškou medu, posypaný skořicí a strouhaným jablkem.<br>"
-         "• **Oběd:** Šťavnatá kuřecí prsa na grilu (200g), vysoce kvalitní jasmínová rýže (100g v syrovém stavu), dušená mrkev a hrášek na másle.<br>"
-         "• **Večeře:** Domácí vaječná frittata (omeleta ze 4 vajec) se špenátem, sušenými rajčaty a sýrem feta (50g)."),
+         "• **Snídaně:** Ovesná kaše s proteinem, arašídovým máslem a banánem.<br>• **Svačina:** Tvaroh (250g) s jablkem a skořicí.<br>• **Oběd:** Kuřecí prsa (200g), jasmínová rýže, dušená mrkev a hrášek.<br>• **Večeře:** Omeleta ze 4 vajec se špenátem a fetou."),
         ("Středomořský Longevity Jídelníček", 
-         "• **Snídaně:** Vaječná omeleta ze 3 vajec s čerstvými rajčaty a plátky sušené šunky (prosciutto), celozrnná bulka.<br>"
-         "• **Svačina:** Sýr Cottage (200g) s pažitkou, okurkou a ředkvičkami.<br>"
-         "• **Oběd:** Krůtí medailonky na bylinkách (200g), pečené brambory ve slupce s rozmarýnem, zelené fazolové lusky na česneku.<br>"
-         "• **Večeře:** Filet z tresky pečený na másle a tymiánu, velký salát z cherry rajčat, černých oliv a vysoce kvalitního olivového oleje."),
+         "• **Snídaně:** Vaječná omeleta (3 ks) s rajčaty a prosciuttem.<br>• **Svačina:** Cottage sýr s okurkou.<br>• **Oběd:** Krůtí medailonky, pečené brambory, fazolové lusky.<br>• **Večeře:** Treska na másle, rajčatový salát s olivovým olejem."),
         ("Čtvrteční Síla & Svalový Růst Jídelníček", 
-         "• **Snídaně:** Proteino-pšeničné nadýchané palačinky potřené tvarohem, přelité lesním ovocem.<br>"
-         "• **Svačina:** Kefírové mléko nebo skyr (400ml) s přídavkem mandlí.<br>"
-         "• **Oběd:** Vepřová panenka (200g) připravená šetrně na pánvi, rýže basmati, křupavý okurkový salát s kropením solí.<br>"
-         "• **Večeře:** Pečená kuřecí čtvrtka (stehenní řízek), domácí batátové hranolky pečené v troubě bez tuku, dip z řeckého jogurtu a česneku."),
+         "• **Snídaně:** Proteinové palačinky s tvarohem.<br>• **Svačina:** Skyr (400ml) s mandlemi.<br>• **Oběd:** Vepřová panenka (200g), basmati rýže, okurkový salát.<br>• **Večeře:** Kuřecí čtvrtka, batátové hranolky, jogurtový dip."),
         ("Páteční Anabolický Jídelníček", 
-         "• **Snídaně:** Vaječina ze 3 celých vajec a 2 bílků, šunka s vysokým podílem masa (96%), celozrnný chléb.<br>"
-         "• **Svačina:** Rychlý proteinový shake s ovesným nápojem a kouskem hořké čokolády (85%).<br>"
-         "• **Oběd:** Hovězí guláš z libového masa (plec) s celozrnným knedlíkem nebo jasmínovou rýží.<br>"
-         "• **Večeře:** Mozzarella light, čerstvá rajčata, domácí bazalkové pesto a plechovka tuňáka ve vlastní šťávě."),
+         "• **Snídaně:** Vaječina (3 vejce + 2 bílky), kvalitní šunka, žitný chléb.<br>• **Svačina:** Proteinový shake s ovesným nápojem.<br>• **Oběd:** Hovězí guláš s rýží.<br>• **Večeře:** Mozzarella light, rajčata, bazalkové pesto, tuňák."),
         ("Víkendový Fitness Jídelníček", 
-         "• **Snídaně:** Domácí vafle z ovesných vloček a vajec, přelité javorovým sirupem, doplněné tvarohem a jahodami.<br>"
-         "• **Svačina:** Hrst vlašských ořechů a kvalitní proteinová tyčinka bez přidaného cukru.<br>"
-         "• **Oběd:** Pečené vykostěné krůtí stehno, poctivé šťouchané brambory s cibulkou na másle.<br>"
-         "• **Večeře:** Pstruh pečený v celku na másle a bylinkách, pečená kořenová zelenina (mrkev, petržel)."),
+         "• **Snídaně:** Domácí vafle z vloček a vajec, tvaroh, jahody.<br>• **Svačina:** Hrst vlašských ořechů a proteinová tyčinka.<br>• **Oběd:** Pečené krůtí stehno, šťouchané brambory.<br>• **Večeře:** Pstruh na bylinkách, pečená kořenová zelenina."),
         ("Nedělní Longevity & Odpočinkový Jídelníček", 
-         "• **Snídaně:** Zapečený sýrový toast na žitném kváskovém chlebu s plátky avokáda a čerstvým rajčetem.<br>"
-         "• **Svačina:** Tučný tvaroh s borůvkami a lžičkou medu.<br>"
-         "• **Oběd:** Pomalu pečená hovězí pečeně, jasmínová rýže, silný hovězí vývar s masem a kořenovou zeleninou.<br>"
-         "• **Večeře:** Velký zeleninový salát obohacený o kousky grilovaného kuřecího masa a lehký dresink z řeckého jogurtu.")
+         "• **Snídaně:** Zapečený sýrový toast s avokádem.<br>• **Svačina:** Tučný tvaroh s borůvkami.<br>• **Oběd:** Pomalu pečená hovězí pečeně, silný vývar.<br>• **Večeře:** Zeleninový salát s grilovaným kuřecím masem.")
     ]
 
     menu_title, menu_content = menus[day_of_week % len(menus)]
@@ -169,19 +145,56 @@ def generate_ai_longevity_advice(garmin, force_ai: bool = False):
 
     return title, summary, training_advice, nutrition_advice, longevity_deep_dive, ai_cache["daily_menu"]
 
+def fetch_day_hrv(base, api_headers, d_str):
+    try:
+        res = requests.get(f"{base}/hrv-service/hrv/{d_str}", headers=api_headers, timeout=5)
+        if res.status_code == 200:
+            val = res.json().get("hrvSummary", {}).get("lastNightAvg")
+            if isinstance(val, (int, float)):
+                return {"date": d_str, "hrv": int(val)}
+    except:
+        pass
+    return None
+
+def fetch_day_steps(base, api_headers, d_str):
+    try:
+        res = requests.get(f"{base}/usersummary-service/stats/steps/daily/{d_str}/{d_str}", headers=api_headers, timeout=5)
+        if res.status_code == 200:
+            items = res.json()
+            items = items if isinstance(items, list) else [items]
+            for item in items:
+                if isinstance(item, dict):
+                    s_val = item.get("totalSteps") or item.get("steps") or item.get("value") or item.get("stepCount")
+                    if s_val is not None:
+                        return {"date": d_str, "steps": int(s_val)}
+    except:
+        pass
+    return None
+
+def fetch_day_hr(base, api_headers, d_str):
+    try:
+        res = requests.get(f"{base}/wellness-service/wellness/dailyHeartRate?date={d_str}", headers=api_headers, timeout=5)
+        if res.status_code == 200:
+            rhr_val = res.json().get("restingHeartRate")
+            if rhr_val is not None:
+                return {"date": d_str, "hr": int(rhr_val)}
+    except:
+        pass
+    return None
+
 def fetch_garmin_data_safe(force_refresh: bool = False):
+    global history_cache
     current_time = time.time()
     
-    # Cache se vrátí pouze tehdy, když nebyl vynucený refresh A v cache už nějaká data úspěšně leží
-    if not force_refresh and api_cache["data"] and (current_time - api_cache["timestamp"] < api_cache["ttl"]):
-        cached_data, cached_log = api_cache["data"]
-        return cached_data, ["[API CACHE] Data, aktivity a historická HRV načtena z mezipaměti"] + cached_log
+    # 1. Pokud máme platná živá data (v rámci 15 minut) a nenutili jsme explicitní refresh, vrátíme je
+    if not force_refresh and live_cache["data"] and (current_time - live_cache["timestamp"] < live_cache["ttl"]):
+        cached_data, cached_log = live_cache["data"]
+        return cached_data, ["[API CACHE] Živá i historická data načtena z mezipaměti (okamžitě)"] + cached_log
 
     debug_log = []
     if force_refresh:
         debug_log.append("[API REFRESH] Vynucena obnova dat z Garmin API.")
 
-    # Výchozí struktura metrik (slouží jako fallback při chybě jednotlivých sub-requestů)
     data_metrics = {
         "resting_heart_rate": 56,
         "hrv_ms": 48,
@@ -208,7 +221,7 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
     }
 
     if not GARMIN_PERSONAL_API_KEY:
-        debug_log.append("Klíč GARMIN_PERSONAL_API_KEY není nastaven. Používají se výchozí hodnoty.")
+        debug_log.append("Klíč GARMIN_PERSONAL_API_KEY není nastaven.")
         return data_metrics, debug_log
 
     fetch_success = False
@@ -234,110 +247,114 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                 today_str = today_obj.isoformat()
                 base = "https://personal.connectapi.garmin.com"
 
-                try:
-                    hr_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={today_str}"
-                    hr_res = requests.get(hr_url, headers=api_headers, timeout=10)
-                    if hr_res.status_code == 200:
-                        rhr = hr_res.json().get("restingHeartRate")
-                        if rhr is not None:
-                            data_metrics["resting_heart_rate"] = int(rhr)
-                except Exception as hr_err:
-                    debug_log.append(f"Chyba tepu: {hr_err}")
+                # 2. INTELIGENTNÍ HISTORIE: Zkontrolujeme, zda máme starší historii v 24h cache.
+                # Pokud vypršela nebo je prázdná, stáhneme ji paralelně. Minulost se přece nemění!
+                is_history_expired = force_refresh or not history_cache["hr_history"] or (current_time - history_cache["timestamp"] > history_cache["ttl"])
 
+                if is_history_expired:
+                    debug_log.append("[HISTORY REFRESH] Minulost vypršela nebo je vynucena – stahuji 30denní historii paralelně.")
+                    past_dates = [(today_obj - datetime.timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
+
+                    with ThreadPoolExecutor(max_workers=10) as executor:
+                        hrv_futures = {executor.submit(fetch_day_hrv, base, api_headers, d): d for d in past_dates}
+                        steps_futures = {executor.submit(fetch_day_steps, base, api_headers, d): d for d in past_dates}
+                        hr_futures = {executor.submit(fetch_day_hr, base, api_headers, d): d for d in past_dates}
+
+                        hrv_list = []
+                        for future in as_completed(hrv_futures):
+                            res = future.result()
+                            if res:
+                                hrv_list.append(res)
+                        hrv_list.sort(key=lambda x: x["date"])
+
+                        total_month_steps = 0
+                        steps_dict = {}
+                        for future in as_completed(steps_futures):
+                            res = future.result()
+                            if res:
+                                steps_dict[res["date"]] = res["steps"]
+                                total_month_steps += res["steps"]
+
+                        hr_list = []
+                        for future in as_completed(hr_futures):
+                            res = future.result()
+                            if res:
+                                hr_list.append(res)
+                        hr_list.sort(key=lambda x: x["date"])
+
+                    # Uložíme do 24hodinové historické cache
+                    history_cache["hr_history"] = hr_list
+                    history_cache["hrv_history"] = hrv_list
+                    history_cache["steps_dict"] = steps_dict
+                    history_cache["steps_month"] = total_month_steps
+                    history_cache["monthly_avg_hr"] = round(sum(item["hr"] for item in hr_list) / len(hr_list)) if hr_list else 55
+                    history_cache["monthly_avg_hrv"] = round(sum(item["hrv"] for item in hrv_list) / len(hrv_list)) if hrv_list else 48
+                    history_cache["timestamp"] = current_time
+                else:
+                    debug_log.append("[HISTORY CACHE] Využívám uloženou 24h historii (minulost se nemění, šetříme API requesty).")
+
+                # Naplníme metriky z historické cache
+                data_metrics["hr_history"] = history_cache["hr_history"]
+                data_metrics["hrv_history"] = history_cache["hrv_history"]
+                data_metrics["steps_month"] = history_cache["steps_month"]
+                data_metrics["monthly_avg_hr"] = history_cache["monthly_avg_hr"]
+                data_metrics["monthly_avg_hrv"] = history_cache["monthly_avg_hrv"]
+                if data_metrics["hr_history"]:
+                    data_metrics["resting_heart_rate"] = data_metrics["hr_history"][-1]["hr"]
+
+                # 3. Dnešní živá data (stahujeme vždy, protože dnešek se vyvíjí)
                 try:
-                    hrv_url = f"{base}/hrv-service/hrv/{today_str}"
-                    hrv_res = requests.get(hrv_url, headers=api_headers, timeout=10)
+                    hrv_res = requests.get(f"{base}/hrv-service/hrv/{today_str}", headers=api_headers, timeout=5)
                     if hrv_res.status_code == 200:
                         val = hrv_res.json().get("hrvSummary", {}).get("lastNightAvg")
                         if isinstance(val, (int, float)):
                             data_metrics["hrv_ms"] = int(val)
-                except Exception as h_err:
-                    debug_log.append(f"Chyba HRV: {h_err}")
+                except:
+                    pass
 
                 try:
-                    hrv_history = []
-                    for i in range(29, -1, -1):
-                        d_str = (today_obj - datetime.timedelta(days=i)).isoformat()
-                        h_hist_url = f"{base}/hrv-service/hrv/{d_str}"
-                        h_hist_res = requests.get(h_hist_url, headers=api_headers, timeout=5)
-                        if h_hist_res.status_code == 200:
-                            h_val = h_hist_res.json().get("hrvSummary", {}).get("lastNightAvg")
-                            if isinstance(h_val, (int, float)):
-                                hrv_history.append({"date": d_str, "hrv": int(h_val)})
-                    
-                    if hrv_history:
-                        data_metrics["hrv_history"] = hrv_history
-                        data_metrics["monthly_avg_hrv"] = round(sum(item["hrv"] for item in hrv_history) / len(hrv_history))
-                except Exception as h_hist_err:
-                    debug_log.append(f"Chyba historie HRV: {h_hist_err}")
-
-                try:
-                    bb_url = f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}"
-                    bb_res = requests.get(bb_url, headers=api_headers, timeout=10)
+                    bb_res = requests.get(f"{base}/wellness-service/wellness/bodyBattery/reports/daily?startDate={today_str}&endDate={today_str}", headers=api_headers, timeout=5)
                     if bb_res.status_code == 200:
-                        bb_json = bb_res.json()
-                        items = bb_json if isinstance(bb_json, list) else [bb_json]
+                        items = bb_res.json()
+                        items = items if isinstance(items, list) else [items]
                         for item in items:
                             if isinstance(item, dict):
-                                values_array = item.get("bodyBatteryValuesArray", [])
-                                if values_array and isinstance(values_array, list):
-                                    last_val = values_array[-1]
-                                    if isinstance(last_val, list) and len(last_val) > 1:
-                                        data_metrics["body_battery_max"] = int(last_val[1])
-                except Exception as bb_err:
-                    debug_log.append(f"Chyba Body Battery: {bb_err}")
+                                arr = item.get("bodyBatteryValuesArray", [])
+                                if arr:
+                                    last = arr[-1]
+                                    if isinstance(last, list) and len(last) > 1:
+                                        data_metrics["body_battery_max"] = int(last[1])
+                except:
+                    pass
 
                 try:
-                    sleep_url = f"{base}/sleep-service/sleep/dailySleep?date={today_str}"
-                    sleep_res = requests.get(sleep_url, headers=api_headers, timeout=10)
+                    sleep_res = requests.get(f"{base}/sleep-service/sleep/dailySleep?date={today_str}", headers=api_headers, timeout=5)
                     if sleep_res.status_code == 200:
-                        sleep_json = sleep_res.json()
-                        items = sleep_json if isinstance(sleep_json, list) else [sleep_json]
+                        items = sleep_res.json()
+                        items = items if isinstance(items, list) else [items]
                         for item in items:
                             if isinstance(item, dict):
-                                score_val = item.get("sleepScores", {}).get("overall", {}).get("value")
-                                if score_val is not None:
-                                    data_metrics["sleep_score"] = int(score_val)
-                                seconds = item.get("sleepTimeSeconds") or item.get("durationInSeconds")
-                                if seconds:
-                                    data_metrics["sleep_hours"] = round(float(seconds) / 3600, 1)
-                except Exception as s_err:
-                    debug_log.append(f"Chyba spánku: {s_err}")
+                                s_val = item.get("sleepScores", {}).get("overall", {}).get("value")
+                                if s_val is not None:
+                                    data_metrics["sleep_score"] = int(s_val)
+                                secs = item.get("sleepTimeSeconds") or item.get("durationInSeconds")
+                                if secs:
+                                    data_metrics["sleep_hours"] = round(float(secs) / 3600, 1)
+                except:
+                    pass
 
                 try:
-                    total_month_steps = 0
-                    for i in range(29, -1, -1):
-                        d_str = (today_obj - datetime.timedelta(days=i)).isoformat()
-                        steps_url = f"{base}/usersummary-service/stats/steps/daily/{d_str}/{d_str}"
-                        steps_res = requests.get(steps_url, headers=api_headers, timeout=5)
-                        if steps_res.status_code == 200:
-                            steps_json = steps_res.json()
-                            items = steps_json if isinstance(steps_json, list) else [steps_json]
-                            for item in items:
-                                if isinstance(item, dict):
-                                    s_val = item.get("totalSteps") or item.get("steps") or item.get("value") or item.get("stepCount")
-                                    if s_val is not None:
-                                        val_int = int(s_val)
-                                        total_month_steps += val_int
-                                        if d_str == today_str:
-                                            data_metrics["steps"] = val_int
-                    data_metrics["steps_month"] = total_month_steps
-                except Exception as st_err:
-                    debug_log.append(f"Chyba kroků: {st_err}")
-
-                try:
-                    stress_url = f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}"
-                    stress_res = requests.get(stress_url, headers=api_headers, timeout=10)
+                    stress_res = requests.get(f"{base}/usersummary-service/stats/stress/daily/{today_str}/{today_str}", headers=api_headers, timeout=5)
                     if stress_res.status_code == 200:
-                        stress_json = stress_res.json()
-                        items = stress_json if isinstance(stress_json, list) else [stress_json]
+                        items = stress_res.json()
+                        items = items if isinstance(items, list) else [items]
                         for item in items:
                             if isinstance(item, dict):
-                                st_val = item.get("averageStressLevel") or item.get("stressScore") or item.get("value")
-                                if st_val is not None:
-                                    data_metrics["stress_avg"] = int(st_val)
-                except Exception as str_err:
-                    debug_log.append(f"Chyba stresu: {str_err}")
+                                st = item.get("averageStressLevel") or item.get("stressScore") or item.get("value")
+                                if st is not None:
+                                    data_metrics["stress_avg"] = int(st)
+                except:
+                    pass
 
                 try:
                     date_90_ago = (today_obj - datetime.timedelta(days=89)).isoformat()
@@ -345,29 +362,21 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                     days_since_monday = today_obj.weekday()
                     current_week_start = (today_obj - datetime.timedelta(days=days_since_monday)).isoformat()
 
-                    sum_url = f"{base}/usersummary-service/v2/dailysummaries?startDate={date_90_ago}&endDate={today_str}"
-                    sum_res = requests.get(sum_url, headers=api_headers, timeout=10)
+                    sum_res = requests.get(f"{base}/usersummary-service/v2/dailysummaries?startDate={date_90_ago}&endDate={today_str}", headers=api_headers, timeout=5)
                     if sum_res.status_code == 200:
                         sum_json = sum_res.json()
                         rows = sum_json.get("data", []) if isinstance(sum_json, dict) else (sum_json if isinstance(sum_json, list) else [])
-                        
-                        int_curr_w = 0
-                        int_roll_w = 0
-                        int_m = 0
-                        int_90 = 0
-
+                        int_curr_w, int_roll_w, int_m, int_90 = 0, 0, 0, 0
                         for row in rows:
                             if isinstance(row, dict):
                                 c_date = str(row.get("calendarDate") or row.get("date") or "")[:10]
                                 if not c_date:
                                     continue
-                                
                                 intensity = row.get("intensityMinutes") or row.get("intensityMinuteSummary")
                                 if isinstance(intensity, dict):
                                     mod = float(intensity.get("moderate") or intensity.get("moderateMinutes") or 0)
                                     vig = float(intensity.get("vigorous") or intensity.get("vigorousMinutes") or 0)
                                     day_total = int(mod + (vig * 2))
-                                    
                                     if c_date >= date_90_ago:
                                         int_90 += day_total
                                     if c_date >= (today_obj - datetime.timedelta(days=29)).isoformat():
@@ -376,82 +385,51 @@ def fetch_garmin_data_safe(force_refresh: bool = False):
                                         int_roll_w += day_total
                                     if c_date >= current_week_start:
                                         int_curr_w += day_total
-
-                                if c_date == today_str:
-                                    resp = row.get("respiration")
-                                    if isinstance(resp, dict):
-                                        avg_r = resp.get("avgValue")
-                                        if avg_r is not None:
-                                            data_metrics["respiration_avg"] = round(float(avg_r), 1)
-
                         data_metrics["intensity_curr_week"] = int_curr_w
                         data_metrics["intensity_week"] = int_roll_w
                         data_metrics["intensity_month"] = int_m
                         data_metrics["intensity_90d"] = int_90
-                except Exception as sum_err:
-                    debug_log.append(f"Chyba souhrnů: {sum_err}")
+                except:
+                    pass
 
                 try:
-                    hr_history = []
-                    for i in range(29, -1, -1):
-                        d_str = (today_obj - datetime.timedelta(days=i)).isoformat()
-                        h_url = f"{base}/wellness-service/wellness/dailyHeartRate?date={d_str}"
-                        h_res = requests.get(h_url, headers=api_headers, timeout=5)
-                        if h_res.status_code == 200:
-                            rhr_val = h_res.json().get("restingHeartRate")
-                            if rhr_val is not None:
-                                hr_history.append({"date": d_str, "hr": int(rhr_val)})
-                    
-                    if hr_history:
-                        data_metrics["hr_history"] = hr_history
-                        data_metrics["monthly_avg_hr"] = round(sum(item["hr"] for item in hr_history) / len(hr_history))
-                except Exception as h_hist_err:
-                    debug_log.append(f"Chyba historie tepu: {h_hist_err}")
-
-                try:
-                    fa_url = f"{base}/fitnessage-service/fitnessage/v2/{today_str}"
-                    fa_res = requests.get(fa_url, headers=api_headers, timeout=10)
+                    fa_res = requests.get(f"{base}/fitnessage-service/fitnessage/v2/{today_str}", headers=api_headers, timeout=5)
                     if fa_res.status_code == 200:
-                        fa_json = fa_res.json()
-                        if fa_json.get("chronologicalAge") is not None:
-                            data_metrics["chronological_age"] = int(round(float(fa_json.get("chronologicalAge"))))
-                        if fa_json.get("fitnessAge") is not None:
-                            data_metrics["fitness_age"] = str(int(round(float(fa_json.get("fitnessAge")))))
-                        if fa_json.get("achievableFitnessAge") is not None:
-                            data_metrics["achievable_fitness_age"] = str(int(round(float(fa_json.get("achievableFitnessAge")))))
-                except Exception as fa_err:
-                    debug_log.append(f"Chyba fitness věku: {fa_err}")
+                        fa = fa_res.json()
+                        if fa.get("fitnessAge") is not None:
+                            data_metrics["fitness_age"] = str(int(round(float(fa.get("fitnessAge")))))
+                        if fa.get("achievableFitnessAge") is not None:
+                            data_metrics["achievable_fitness_age"] = str(int(round(float(fa.get("achievableFitnessAge")))))
+                except:
+                    pass
 
                 try:
-                    act_url = f"{base}/activitylist-service/activities/search/activities?start=0&limit=30"
-                    act_res = requests.get(act_url, headers=api_headers, timeout=10)
+                    act_res = requests.get(f"{base}/activitylist-service/activities/search/activities?start=0&limit=30", headers=api_headers, timeout=5)
                     if act_res.status_code == 200:
                         acts = act_res.json()
                         if isinstance(acts, list):
-                            parsed_acts = []
+                            parsed = []
                             for a in acts:
                                 name = a.get("activityName") or a.get("activityType", {}).get("typeKey", "Aktivita")
-                                date_time = str(a.get("startTimeLocal", "")).split("T")[0]
-                                duration = round(float(a.get("duration", 0)) / 60, 1)
-                                distance_km = round(float(a.get("distance", 0)) / 1000, 2)
-                                parsed_acts.append({"name": name, "date": date_time, "duration": duration, "distance": distance_km})
-                            data_metrics["activities_list"] = parsed_acts
-                except Exception as a_err:
-                    debug_log.append(f"Chyba aktivit: {a_err}")
+                                dt = str(a.get("startTimeLocal", "")).split("T")[0]
+                                dur = round(float(a.get("duration", 0)) / 60, 1)
+                                dist = round(float(a.get("distance", 0)) / 1000, 2)
+                                parsed.append({"name": name, "date": dt, "duration": dur, "distance": dist})
+                            data_metrics["activities_list"] = parsed
+                except:
+                    pass
 
             else:
-                debug_log.append("Access token nenalezen v odpovědi.")
+                debug_log.append("Access token nenalezen.")
         else:
-            debug_log.append(f"Token chyba HTTP: {token_res.status_code}")
+            debug_log.append(f"Token chyba: {token_res.status_code}")
 
     except Exception as e:
-        debug_log.append(f"Kritická výjimka při komunikaci s API: {str(e)}")
+        debug_log.append(f"Výjimka: {str(e)}")
 
-    # Uložíme do cache POUZE tehdy, pokud token a základní tok proběhl úspěšně.
-    # Zamezíme tím uložení chybového stavu / fallback hodnot do cache na 15 minut.
     if fetch_success:
-        api_cache["data"] = (data_metrics, debug_log)
-        api_cache["timestamp"] = current_time
+        live_cache["data"] = (data_metrics, debug_log)
+        live_cache["timestamp"] = current_time
 
     return data_metrics, debug_log
 
