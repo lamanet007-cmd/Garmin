@@ -1,3 +1,4 @@
+
 import os
 import html
 import time
@@ -25,17 +26,12 @@ LIVE_TTL = 300
 HISTORY_TTL = 6 * 60 * 60
 REQUEST_TIMEOUT = 20
 
-# Garmin API ochrana
 MIN_REQUEST_INTERVAL = 1.5
 MAX_RETRIES_429 = 3
-
-# HRV načítáme pouze za posledních 14 dní.
-# Ostatní historické statistiky zůstávají za 30 dní.
 HRV_HISTORY_DAYS = 14
 
 _request_lock = threading.Lock()
 _last_request_at = 0.0
-
 _refresh_lock = threading.Lock()
 
 user_stats_cache = {
@@ -99,6 +95,49 @@ def get_number(data, *keys):
             return float(value)
         except (TypeError, ValueError):
             pass
+
+    return None
+
+
+def find_nested_number(data, keys, depth=0):
+    """
+    Hledá hodnotu i v zanořených objektech a seznamech.
+    Garmin endpointy mohou vracet různé struktury odpovědí.
+    """
+
+    if depth > 6:
+        return None
+
+    if isinstance(data, dict):
+
+        value = get_number(data, *keys)
+
+        if value is not None:
+            return value
+
+        for child in data.values():
+
+            if isinstance(child, (dict, list)):
+                value = find_nested_number(
+                    child,
+                    keys,
+                    depth + 1,
+                )
+
+                if value is not None:
+                    return value
+
+    elif isinstance(data, list):
+
+        for child in data:
+            value = find_nested_number(
+                child,
+                keys,
+                depth + 1,
+            )
+
+            if value is not None:
+                return value
 
     return None
 
@@ -349,6 +388,7 @@ def map_daily_summary(row):
         (
             (
                 "averageStressLevel",
+                "avgStressLevel",
                 "averageStress",
                 "stressScore",
             ),
@@ -405,6 +445,113 @@ def get_daily_intensity(row):
 
 
 # ---------------------------------------------------------
+# SAMOSTATNÉ NAČÍTÁNÍ TEPU A STRESU
+# ---------------------------------------------------------
+
+def fetch_today_heart_rate_and_stress(
+    headers,
+    today_s,
+    metrics,
+    log,
+):
+    """
+    Doplní chybějící klidový tep a denní stres.
+    Nejprve používá denní wellness endpointy.
+    """
+
+    # KLIDOVÝ TEP
+    if metrics.get("resting_heart_rate") is None:
+
+        try:
+            result = api_get(
+                f"{GARMIN_BASE}/wellness-service/wellness/dailyHeartRate",
+                headers,
+                params={"date": today_s},
+            )
+
+            value = find_nested_number(
+                result,
+                (
+                    "restingHeartRate",
+                    "restingHr",
+                    "restingHeartRateValue",
+                ),
+            )
+
+            if value is not None:
+                metrics["resting_heart_rate"] = round(value)
+
+                log.append(
+                    "Klidový tep doplněn ze samostatného Garmin endpointu: "
+                    f"{round(value)} bpm."
+                )
+
+            else:
+                log.append(
+                    "Klidový tep: samostatný endpoint odpověděl, "
+                    "ale hodnota nebyla nalezena."
+                )
+
+                logger.info(
+                    "Garmin dailyHeartRate odpověď: %s",
+                    str(result)[:500],
+                )
+
+        except Exception as error:
+            log_error(
+                log,
+                "Samostatné načtení klidového tepu",
+                error,
+            )
+
+    # DENNÍ STRES
+    if metrics.get("stress_avg") is None:
+
+        try:
+            result = api_get(
+                f"{GARMIN_BASE}/wellness-service/wellness/dailyStress/{today_s}",
+                headers,
+            )
+
+            value = find_nested_number(
+                result,
+                (
+                    "avgStressLevel",
+                    "averageStressLevel",
+                    "averageStress",
+                    "stressAvg",
+                    "overallStressLevel",
+                ),
+            )
+
+            if value is not None:
+                metrics["stress_avg"] = round(value)
+
+                log.append(
+                    "Denní stres doplněn ze samostatného Garmin endpointu: "
+                    f"{round(value)}."
+                )
+
+            else:
+                log.append(
+                    "Stres: samostatný endpoint odpověděl, "
+                    "ale průměrná hodnota nebyla nalezena."
+                )
+
+                logger.info(
+                    "Garmin dailyStress odpověď: %s",
+                    str(result)[:500],
+                )
+
+        except Exception as error:
+            log_error(
+                log,
+                "Samostatné načtení denního stresu",
+                error,
+            )
+
+
+# ---------------------------------------------------------
 # HISTORIE
 # ---------------------------------------------------------
 
@@ -412,7 +559,6 @@ def fetch_history(headers, today, log):
 
     start_90 = today - datetime.timedelta(days=89)
 
-    # Jeden požadavek na denní souhrny.
     try:
 
         data = api_get(
@@ -660,7 +806,6 @@ def fetch_garmin_data_safe(force_refresh=False):
             f"Data z cache ({int(now - live_cache['timestamp'])} s)."
         ] + old_log
 
-    # Zamezení několika současným synchronizacím.
     with _refresh_lock:
 
         now = time.time()
@@ -771,6 +916,14 @@ def _fetch_garmin_data(force_refresh=False):
             "total_calories"
         )
 
+        # Samostatné načtení chybějícího tepu a stresu.
+        fetch_today_heart_rate_and_stress(
+            headers,
+            today_s,
+            metrics,
+            log,
+        )
+
         # Kroky – dodatečný dotaz jen pokud chybí v souhrnu.
         if metrics["steps"] is None:
 
@@ -782,19 +935,18 @@ def _fetch_garmin_data(force_refresh=False):
                     headers,
                 )
 
-                for row in extract_rows(result):
-
-                    value = get_number(
-                        row,
+                value = find_nested_number(
+                    result,
+                    (
                         "totalSteps",
                         "steps",
                         "value",
                         "stepCount",
-                    )
+                    ),
+                )
 
-                    if value is not None:
-                        metrics["steps"] = round(value)
-                        break
+                if value is not None:
+                    metrics["steps"] = round(value)
 
             except Exception as error:
 
@@ -939,7 +1091,7 @@ def _fetch_garmin_data(force_refresh=False):
                 error,
             )
 
-        # Intenzivní minuty – použijeme již načtené souhrny.
+        # Intenzivní minuty.
         summaries = (
             history_cache.get("summaries_90d") or []
         )
