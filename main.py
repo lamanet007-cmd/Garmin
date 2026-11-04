@@ -45,6 +45,7 @@ def safe_text(value):
 def fmt(value, suffix="", decimals=0):
     if value is None:
         return "Nedostupné"
+
     try:
         number = float(value)
         result = (
@@ -176,7 +177,11 @@ def find_latest_body_battery(result):
         if not isinstance(item, dict):
             continue
 
-        for entry in (item.get("bodyBatteryValuesArray") or []):
+        for entry in (
+            item.get("bodyBatteryValuesArray")
+            or item.get("bodyBatteryValues")
+            or []
+        ):
 
             if isinstance(entry, (list, tuple)) and len(entry) >= 2:
                 try:
@@ -1124,11 +1129,18 @@ def home(refresh: bool = False):
     )
 
     def card(label, value, suffix="", note=""):
+        # Textové hodnoty (např. rozsah Body Battery) se
+        # zobrazí přímo, číselné hodnoty se standardně formátují.
+        if isinstance(value, str):
+            display_value = value
+        else:
+            display_value = fmt(value, suffix)
+
         return f"""
         <div class="metric">
           <div class="muted">{safe_text(label)}</div>
           <div class="metric-value">
-            {safe_text(fmt(value, suffix))}
+            {safe_text(display_value)}
           </div>
           <div class="note">{safe_text(note)}</div>
         </div>
@@ -1697,35 +1709,35 @@ details[open] summary {{
 </div>
 
 <script>
-(function() {
+(function() {{
     const checkbox = document.getElementById("activities-toggle");
     const content = document.getElementById("activities-content");
     const key = "garminActivitiesVisible";
 
     let visible = true;
 
-    try {
+    try {{
         const saved = localStorage.getItem(key);
 
-        if (saved !== null) {
+        if (saved !== null) {{
             visible = saved === "1";
-        }
-    } catch(e) {}
+        }}
+    }} catch(e) {{}}
 
     checkbox.checked = visible;
     content.hidden = !visible;
 
-    checkbox.addEventListener("change", function() {
+    checkbox.addEventListener("change", function() {{
         content.hidden = !checkbox.checked;
 
-        try {
+        try {{
             localStorage.setItem(
                 key,
                 checkbox.checked ? "1" : "0"
             );
-        } catch(e) {}
-    });
-})();
+        }} catch(e) {{}}
+    }});
+}})();
 </script>
 
 </body>
