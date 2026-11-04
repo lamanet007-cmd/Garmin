@@ -3,9 +3,9 @@ import html
 import time
 import datetime
 import logging
+import threading
 import requests
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -14,15 +14,29 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 # ---------------------------------------------------------
 
 app = FastAPI(title="Garmin Health Dashboard")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("garmin-dashboard")
 
-GARMIN_PERSONAL_API_KEY = os.environ.get("GARMIN_PERSONAL_API_KEY", "").strip()
+GARMIN_PERSONAL_API_KEY = os.environ.get(
+    "GARMIN_PERSONAL_API_KEY", ""
+).strip()
+
 GARMIN_BASE = "https://personal.connectapi.garmin.com"
 
 LIVE_TTL = 300
 HISTORY_TTL = 6 * 60 * 60
-REQUEST_TIMEOUT = 12
+REQUEST_TIMEOUT = 20
+
+# Minimální prodleva mezi požadavky na Garmin.
+GARMIN_REQUEST_INTERVAL = 1.5
+
+# Po odpovědi 429 se aplikace na tuto dobu zastaví.
+GARMIN_429_DEFAULT_WAIT = 120
+GARMIN_429_MAX_WAIT = 600
+
+# Synchronizace historie se provádí postupně.
+HISTORY_DAYS = 30
 
 user_stats_cache = {
     "user": "Drsňák",
@@ -30,8 +44,27 @@ user_stats_cache = {
     "body_fat": 14.2,
 }
 
-live_cache = {"data": None, "timestamp": 0}
-history_cache = {"data": None, "timestamp": 0}
+live_cache = {
+    "data": None,
+    "timestamp": 0,
+}
+
+history_cache = {
+    "data": None,
+    "timestamp": 0,
+}
+
+# Globální ochrana proti souběžným požadavkům.
+garmin_request_lock = threading.Lock()
+garmin_last_request = 0.0
+garmin_blocked_until = 0.0
+
+# Zabraňuje souběžnému spuštění více synchronizací.
+sync_lock = threading.Lock()
+
+
+class GarminRateLimitError(Exception):
+    """Garmin API odmítlo požadavek kvůli limitu."""
 
 
 # ---------------------------------------------------------
@@ -48,12 +81,15 @@ def fmt(value, suffix="", decimals=0):
 
     try:
         number = float(value)
+
         result = (
             f"{number:.{decimals}f}"
             if decimals
             else f"{int(round(number)):,}".replace(",", " ")
         )
+
         return f"{result}{suffix}"
+
     except (TypeError, ValueError):
         return "Nedostupné"
 
@@ -70,6 +106,7 @@ def get_number(data, *keys):
 
         try:
             return float(value)
+
         except (TypeError, ValueError):
             continue
 
@@ -79,6 +116,7 @@ def get_number(data, *keys):
 def listify(value):
     if isinstance(value, list):
         return value
+
     return [value] if value is not None else []
 
 
@@ -89,22 +127,11 @@ def average(values, decimals=1):
         try:
             if value is not None:
                 valid.append(float(value))
+
         except (TypeError, ValueError):
             pass
 
     return round(sum(valid) / len(valid), decimals) if valid else None
-
-
-def api_get(url, headers, params=None, timeout=REQUEST_TIMEOUT):
-    response = requests.get(
-        url,
-        headers=headers,
-        params=params,
-        timeout=timeout,
-    )
-
-    response.raise_for_status()
-    return response.json()
 
 
 def log_error(log, label, error):
@@ -136,6 +163,104 @@ def date_range(days, today=None):
     ]
 
 
+# ---------------------------------------------------------
+# GARMIN RATE LIMIT
+# ---------------------------------------------------------
+
+def get_retry_after(response):
+    """
+    Přečte Retry-After, pokud ho Garmin vrátí.
+    Podporuje počet sekund.
+    """
+
+    value = response.headers.get("Retry-After")
+
+    if not value:
+        return GARMIN_429_DEFAULT_WAIT
+
+    try:
+        seconds = int(float(value))
+        return max(1, min(seconds, GARMIN_429_MAX_WAIT))
+
+    except (TypeError, ValueError):
+        return GARMIN_429_DEFAULT_WAIT
+
+
+def api_get(url, headers, params=None, timeout=REQUEST_TIMEOUT):
+    """
+    Bezpečné volání Garmin API.
+
+    - požadavky jsou serializované
+    - mezi požadavky je prodleva
+    - při 429 se nastaví globální blokace
+    - během blokace se neposílají další požadavky
+    """
+
+    global garmin_last_request
+    global garmin_blocked_until
+
+    with garmin_request_lock:
+
+        now = time.time()
+
+        if now < garmin_blocked_until:
+            remaining = int(garmin_blocked_until - now) + 1
+
+            raise GarminRateLimitError(
+                f"Garmin API je dočasně omezeno. "
+                f"Další pokus za přibližně {remaining} sekund."
+            )
+
+        elapsed = now - garmin_last_request
+
+        if elapsed < GARMIN_REQUEST_INTERVAL:
+            time.sleep(GARMIN_REQUEST_INTERVAL - elapsed)
+
+        now = time.time()
+
+        if now < garmin_blocked_until:
+            remaining = int(garmin_blocked_until - now) + 1
+
+            raise GarminRateLimitError(
+                f"Garmin API je dočasně omezeno. "
+                f"Další pokus za přibližně {remaining} sekund."
+            )
+
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=timeout,
+            )
+
+            garmin_last_request = time.time()
+
+        except requests.RequestException:
+            garmin_last_request = time.time()
+            raise
+
+        if response.status_code == 429:
+            wait_seconds = get_retry_after(response)
+
+            garmin_blocked_until = (
+                time.time() + wait_seconds
+            )
+
+            message = (
+                f"Garmin vrátil HTTP 429. "
+                f"Synchronizace pozastavena na {wait_seconds} sekund."
+            )
+
+            logger.warning(message)
+
+            raise GarminRateLimitError(message)
+
+        response.raise_for_status()
+
+        return response.json()
+
+
 def parse_body_battery_values(item):
     raw = (
         item.get("bodyBatteryValuesArray")
@@ -146,6 +271,7 @@ def parse_body_battery_values(item):
     values = []
 
     for entry in raw:
+
         if isinstance(entry, (list, tuple)) and len(entry) >= 2:
             try:
                 value = float(entry[-1])
@@ -174,6 +300,7 @@ def find_latest_body_battery(result):
     candidates = []
 
     for item in extract_rows(result):
+
         if not isinstance(item, dict):
             continue
 
@@ -188,6 +315,7 @@ def find_latest_body_battery(result):
                     candidates.append(
                         (float(entry[0]), float(entry[-1]))
                     )
+
                 except (TypeError, ValueError):
                     pass
 
@@ -227,13 +355,15 @@ def fetch_one_day(base, headers, day):
             f"{base}/wellness-service/wellness/dailyHeartRate",
             headers,
             params={"date": day},
-            timeout=REQUEST_TIMEOUT,
         )
 
         value = get_number(data, "restingHeartRate")
 
         if value is not None:
             result["hr"] = round(value)
+
+    except GarminRateLimitError:
+        raise
 
     except Exception:
         pass
@@ -243,7 +373,6 @@ def fetch_one_day(base, headers, day):
         data = api_get(
             f"{base}/hrv-service/hrv/{day}",
             headers,
-            timeout=REQUEST_TIMEOUT,
         )
 
         summary = (
@@ -257,6 +386,9 @@ def fetch_one_day(base, headers, day):
         if value is not None:
             result["hrv"] = round(value)
 
+    except GarminRateLimitError:
+        raise
+
     except Exception:
         pass
 
@@ -265,7 +397,6 @@ def fetch_one_day(base, headers, day):
         data = api_get(
             f"{base}/usersummary-service/stats/steps/daily/{day}/{day}",
             headers,
-            timeout=REQUEST_TIMEOUT,
         )
 
         for row in extract_rows(data):
@@ -281,6 +412,9 @@ def fetch_one_day(base, headers, day):
                 result["steps"] = round(value)
                 break
 
+    except GarminRateLimitError:
+        raise
+
     except Exception:
         pass
 
@@ -289,7 +423,6 @@ def fetch_one_day(base, headers, day):
         data = api_get(
             f"{base}/usersummary-service/stats/stress/daily/{day}/{day}",
             headers,
-            timeout=REQUEST_TIMEOUT,
         )
 
         for row in extract_rows(data):
@@ -304,6 +437,9 @@ def fetch_one_day(base, headers, day):
                 result["stress"] = round(value)
                 break
 
+    except GarminRateLimitError:
+        raise
+
     except Exception:
         pass
 
@@ -316,7 +452,6 @@ def fetch_one_day(base, headers, day):
                 "startDate": day,
                 "endDate": day,
             },
-            timeout=REQUEST_TIMEOUT,
         )
 
         rows = extract_rows(data)
@@ -325,6 +460,7 @@ def fetch_one_day(base, headers, day):
             row = rows[0]
 
             if isinstance(row, dict):
+
                 fields = (
                     ("averageSpo2", "spo2"),
                     ("lowestSpo2", "spo2_min"),
@@ -344,43 +480,108 @@ def fetch_one_day(base, headers, day):
                     if value is not None:
                         result[target] = round(value, 1)
 
+    except GarminRateLimitError:
+        raise
+
     except Exception:
         pass
 
     return result
 
 
-def fetch_history(headers, today):
-    dates = date_range(30, today)
+def fetch_history(headers, today, log=None):
+    """
+    Historie se načítá postupně.
+
+    Při HTTP 429 se další požadavky okamžitě zastaví.
+    Částečně získaná data se zachovají.
+    """
+
+    dates = date_range(HISTORY_DAYS, today)
+
     rows = []
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = [
-            executor.submit(
-                fetch_one_day,
+    if history_cache["data"]:
+        old_rows = {
+            row.get("date"): row
+            for row in history_cache["data"]
+            if isinstance(row, dict)
+        }
+    else:
+        old_rows = {}
+
+    rate_limited = False
+
+    for index, day in enumerate(dates, start=1):
+
+        try:
+            row = fetch_one_day(
                 GARMIN_BASE,
                 headers,
                 day,
             )
-            for day in dates
-        ]
 
-        for future in as_completed(futures):
-            try:
-                row = future.result()
+            # Nové hodnoty doplní staré.
+            previous = old_rows.get(day, {})
+            merged = dict(previous)
+            merged.update(row)
 
-                if row:
-                    rows.append(row)
+            rows.append(merged)
 
-            except Exception:
-                pass
+            if log is not None:
+                log.append(
+                    f"Historie: {index}/{len(dates)} dní."
+                )
 
-    rows.sort(key=lambda x: x["date"])
+        except GarminRateLimitError as error:
+            rate_limited = True
+
+            if log is not None:
+                log_error(
+                    log,
+                    "Limit Garmin API – historie přerušena",
+                    error,
+                )
+
+            # Už neposíláme další požadavky.
+            break
+
+        except Exception as error:
+            if log is not None:
+                log_error(
+                    log,
+                    f"Historie {day}",
+                    error,
+                )
+
+            previous = old_rows.get(day)
+
+            if previous:
+                rows.append(previous)
+            else:
+                rows.append({"date": day})
+
+    # Zachování starých dat pro dny, které se nepodařilo obnovit.
+    existing_dates = {
+        row.get("date")
+        for row in rows
+    }
+
+    for day in dates:
+        if day not in existing_dates and day in old_rows:
+            rows.append(old_rows[day])
+
+    rows.sort(key=lambda x: x.get("date", ""))
 
     history_cache["data"] = rows
-    history_cache["timestamp"] = time.time()
 
-    return rows
+    # Neúplná historie se nesmí označit jako plně aktualizovaná.
+    if rate_limited:
+        history_cache["timestamp"] = 0
+    else:
+        history_cache["timestamp"] = time.time()
+
+    return rows, rate_limited
 
 
 # ---------------------------------------------------------
@@ -435,43 +636,73 @@ def fetch_garmin_data_safe(force_refresh=False):
             f"Data z cache ({int(now - live_cache['timestamp'])} s)."
         ] + old_log
 
+    # Zamezení souběžným synchronizacím.
+    if not sync_lock.acquire(blocking=False):
+        if live_cache["data"] is not None:
+            data, old_log = live_cache["data"]
+
+            return data, [
+                "Synchronizace již probíhá. Zobrazuji poslední dostupná data."
+            ] + old_log
+
+        return empty_metrics(), [
+            "Synchronizace již probíhá. Zkus obnovit stránku za chvíli."
+        ]
+
     metrics = empty_metrics()
     log = []
 
-    if not GARMIN_PERSONAL_API_KEY:
-        return metrics, [
-            "Chybí GARMIN_PERSONAL_API_KEY v prostředí aplikace."
-        ]
-
     try:
-        token_url = (
-            f"{GARMIN_BASE}/personalapitoken-service/"
-            "personal-api/personal-api-key/token"
-        )
 
-        token_response = requests.post(
-            token_url,
-            headers={
-                "Authorization": f"ApiKey {GARMIN_PERSONAL_API_KEY}"
-            },
-            timeout=15,
-        )
+        if not GARMIN_PERSONAL_API_KEY:
+            return metrics, [
+                "Chybí GARMIN_PERSONAL_API_KEY v prostředí aplikace."
+            ]
 
-        token_response.raise_for_status()
-
+        # Token
         try:
-            token_json = token_response.json()
-
-            access_token = (
-                token_json.get("access_token")
-                or token_json.get("token")
+            token_url = (
+                f"{GARMIN_BASE}/personalapitoken-service/"
+                "personal-api/personal-api-key/token"
             )
 
-        except ValueError:
-            access_token = token_response.text.strip().replace('"', "")
+            token_response = requests.post(
+                token_url,
+                headers={
+                    "Authorization": (
+                        f"ApiKey {GARMIN_PERSONAL_API_KEY}"
+                    )
+                },
+                timeout=15,
+            )
 
-        if not access_token:
-            return metrics, ["Garmin nevrátil přístupový token."]
+            token_response.raise_for_status()
+
+            try:
+                token_json = token_response.json()
+
+                access_token = (
+                    token_json.get("access_token")
+                    or token_json.get("token")
+                )
+
+            except ValueError:
+                access_token = (
+                    token_response.text.strip().replace('"', "")
+                )
+
+            if not access_token:
+                return metrics, [
+                    "Garmin nevrátil přístupový token."
+                ]
+
+        except Exception as error:
+            log_error(
+                log,
+                "Získání Garmin tokenu",
+                error,
+            )
+            return metrics, log
 
         headers = {
             "Authorization": f"Bearer {access_token}"
@@ -488,18 +719,30 @@ def fetch_garmin_data_safe(force_refresh=False):
 
         log.append("Garmin token získán.")
 
-        # Historie
+        # -------------------------------------------------
+        # HISTORIE
+        # -------------------------------------------------
+
         if (
             force_refresh
             or history_cache["data"] is None
             or now - history_cache["timestamp"] > HISTORY_TTL
         ):
-            log.append("Obnovuji 30denní historii.")
 
-            history = fetch_history(headers, today)
+            log.append(
+                "Obnovuji 30denní historii postupně."
+            )
+
+            history, history_limited = fetch_history(
+                headers,
+                today,
+                log,
+            )
 
         else:
             history = history_cache["data"]
+            history_limited = False
+
             log.append("Historie načtena z cache.")
 
         metrics["history"] = history
@@ -513,13 +756,14 @@ def fetch_garmin_data_safe(force_refresh=False):
         )
 
         metrics["steps_month"] = sum(
-            r.get("steps", 0) for r in history
+            r.get("steps", 0) or 0
+            for r in history
         )
 
         today_row = next(
             (
                 r for r in reversed(history)
-                if r["date"] == today_s
+                if r.get("date") == today_s
             ),
             {},
         )
@@ -537,10 +781,33 @@ def fetch_garmin_data_safe(force_refresh=False):
                 2,
             )
 
-        metrics["active_calories"] = today_row.get("active_calories")
-        metrics["total_calories"] = today_row.get("total_calories")
+        metrics["active_calories"] = today_row.get(
+            "active_calories"
+        )
 
-        # Kroky
+        metrics["total_calories"] = today_row.get(
+            "total_calories"
+        )
+
+        # Pokud Garmin už ohlásil limit, další požadavky
+        # neposíláme. Zobrazíme poslední dostupná data.
+        if history_limited:
+            log.append(
+                "Další načítání pozastaveno kvůli limitu Garmin API."
+            )
+
+            if today_row.get("steps") is not None:
+                metrics["steps"] = today_row.get("steps")
+
+            live_cache["data"] = (metrics, log)
+            live_cache["timestamp"] = time.time()
+
+            return metrics, log
+
+        # -------------------------------------------------
+        # KROKY
+        # -------------------------------------------------
+
         try:
             result = api_get(
                 f"{GARMIN_BASE}/usersummary-service/stats/steps/daily/"
@@ -561,270 +828,344 @@ def fetch_garmin_data_safe(force_refresh=False):
                     metrics["steps"] = round(value)
                     break
 
+        except GarminRateLimitError as error:
+            log_error(log, "Kroky – limit API", error)
+
         except Exception as error:
             log_error(log, "Kroky", error)
 
         if metrics["steps"] is None:
             metrics["steps"] = today_row.get("steps")
 
+        # -------------------------------------------------
         # HRV
-        try:
-            result = api_get(
-                f"{GARMIN_BASE}/hrv-service/hrv/{today_s}",
-                headers,
-            )
+        # -------------------------------------------------
 
-            summary = (
-                result.get("hrvSummary", {})
-                if isinstance(result, dict)
-                else {}
-            )
-
-            value = get_number(summary, "lastNightAvg")
-
-            if value is not None:
-                metrics["hrv_ms"] = round(value)
-
-        except Exception as error:
-            log_error(log, "HRV", error)
-
-        # Body Battery – poslední dostupný vzorek
-        try:
-            result = api_get(
-                f"{GARMIN_BASE}/wellness-service/wellness/"
-                "bodyBattery/reports/daily",
-                headers,
-                params={
-                    "startDate": today_s,
-                    "endDate": today_s,
-                },
-            )
-
-            metrics["body_battery"] = find_latest_body_battery(result)
-
-            all_values = []
-
-            for row in extract_rows(result):
-                if isinstance(row, dict):
-                    all_values.extend(
-                        parse_body_battery_values(row)
-                    )
-
-            if all_values:
-                metrics["body_battery_min"] = min(all_values)
-                metrics["body_battery_max"] = max(all_values)
-
-            if metrics["body_battery"] is not None:
-                metrics["body_battery_time"] = (
-                    "Poslední dostupný vzorek dne"
+        if time.time() >= garmin_blocked_until:
+            try:
+                result = api_get(
+                    f"{GARMIN_BASE}/hrv-service/hrv/{today_s}",
+                    headers,
                 )
 
-        except Exception as error:
-            log_error(log, "Body Battery", error)
-
-        # Spánek
-        try:
-            result = api_get(
-                f"{GARMIN_BASE}/sleep-service/sleep/dailySleep",
-                headers,
-                params={"date": today_s},
-            )
-
-            for row in extract_rows(result):
-                if not isinstance(row, dict):
-                    continue
-
-                overall = (
-                    row.get("sleepScores") or {}
-                ).get("overall") or {}
-
-                score = get_number(overall, "value")
-
-                if score is not None:
-                    metrics["sleep_score"] = round(score)
-
-                seconds = get_number(
-                    row,
-                    "sleepTimeSeconds",
-                    "durationInSeconds",
+                summary = (
+                    result.get("hrvSummary", {})
+                    if isinstance(result, dict)
+                    else {}
                 )
 
-                if seconds and seconds > 0:
-                    metrics["sleep_hours"] = round(
-                        seconds / 3600,
-                        1,
-                    )
+                value = get_number(summary, "lastNightAvg")
 
-                if metrics["respiration_avg"] is None:
-                    metrics["respiration_avg"] = get_number(
-                        row,
-                        "averageRespirationValue",
-                        "avgRespirationValue",
-                    )
+                if value is not None:
+                    metrics["hrv_ms"] = round(value)
 
-        except Exception as error:
-            log_error(log, "Spánek", error)
+            except GarminRateLimitError as error:
+                log_error(log, "HRV – limit API", error)
 
-        # Intenzivní minuty
-        try:
-            start_90 = today - datetime.timedelta(days=89)
-            start_7 = today - datetime.timedelta(days=6)
-            start_30 = today - datetime.timedelta(days=29)
+            except Exception as error:
+                log_error(log, "HRV", error)
 
-            start_week = today - datetime.timedelta(
-                days=today.weekday()
-            )
+        # -------------------------------------------------
+        # BODY BATTERY
+        # -------------------------------------------------
 
-            result = api_get(
-                f"{GARMIN_BASE}/usersummary-service/v2/dailysummaries",
-                headers,
-                params={
-                    "startDate": start_90.isoformat(),
-                    "endDate": today_s,
-                },
-            )
-
-            totals = {
-                "week": 0,
-                "7d": 0,
-                "month": 0,
-                "90d": 0,
-            }
-
-            for row in extract_rows(result):
-                if not isinstance(row, dict):
-                    continue
-
-                date_s = str(
-                    row.get("calendarDate")
-                    or row.get("date")
-                    or ""
-                )[:10]
-
-                try:
-                    day = datetime.date.fromisoformat(date_s)
-                except ValueError:
-                    continue
-
-                intensity = (
-                    row.get("intensityMinutes")
-                    or row.get("intensityMinuteSummary")
-                    or {}
+        if time.time() >= garmin_blocked_until:
+            try:
+                result = api_get(
+                    f"{GARMIN_BASE}/wellness-service/wellness/"
+                    "bodyBattery/reports/daily",
+                    headers,
+                    params={
+                        "startDate": today_s,
+                        "endDate": today_s,
+                    },
                 )
 
-                moderate = get_number(
-                    intensity,
-                    "moderate",
-                    "moderateMinutes",
-                ) or 0
+                metrics["body_battery"] = (
+                    find_latest_body_battery(result)
+                )
 
-                vigorous = get_number(
-                    intensity,
-                    "vigorous",
-                    "vigorousMinutes",
-                ) or 0
+                all_values = []
 
-                total = moderate + vigorous * 2
+                for row in extract_rows(result):
+                    if isinstance(row, dict):
+                        all_values.extend(
+                            parse_body_battery_values(row)
+                        )
 
-                if day >= start_90:
-                    totals["90d"] += total
+                if all_values:
+                    metrics["body_battery_min"] = min(all_values)
+                    metrics["body_battery_max"] = max(all_values)
 
-                if day >= start_30:
-                    totals["month"] += total
+                if metrics["body_battery"] is not None:
+                    metrics["body_battery_time"] = (
+                        "Poslední dostupný vzorek dne"
+                    )
 
-                if day >= start_7:
-                    totals["7d"] += total
+            except GarminRateLimitError as error:
+                log_error(log, "Body Battery – limit API", error)
 
-                if day >= start_week:
-                    totals["week"] += total
+            except Exception as error:
+                log_error(log, "Body Battery", error)
 
-            metrics["intensity_curr_week"] = round(totals["week"])
-            metrics["intensity_week"] = round(totals["7d"])
-            metrics["intensity_month"] = round(totals["month"])
-            metrics["intensity_90d"] = round(totals["90d"])
+        # -------------------------------------------------
+        # SPÁNEK
+        # -------------------------------------------------
 
-        except Exception as error:
-            log_error(log, "Intenzivní minuty", error)
+        if time.time() >= garmin_blocked_until:
+            try:
+                result = api_get(
+                    f"{GARMIN_BASE}/sleep-service/sleep/dailySleep",
+                    headers,
+                    params={"date": today_s},
+                )
 
-        # Fitness věk
-        try:
-            result = api_get(
-                f"{GARMIN_BASE}/fitnessage-service/fitnessage/v2/"
-                f"{today_s}",
-                headers,
-            )
+                for row in extract_rows(result):
 
-            metrics["fitness_age"] = get_number(
-                result,
-                "fitnessAge",
-            )
-
-            metrics["achievable_fitness_age"] = get_number(
-                result,
-                "achievableFitnessAge",
-            )
-
-        except Exception as error:
-            log_error(log, "Fitness věk", error)
-
-        # Aktivity
-        try:
-            result = api_get(
-                f"{GARMIN_BASE}/activitylist-service/"
-                "activities/search/activities",
-                headers,
-                params={
-                    "start": 0,
-                    "limit": 30,
-                },
-            )
-
-            if isinstance(result, list):
-                for activity in result:
-
-                    if not isinstance(activity, dict):
+                    if not isinstance(row, dict):
                         continue
 
-                    kind = activity.get("activityType") or {}
+                    overall = (
+                        row.get("sleepScores") or {}
+                    ).get("overall") or {}
 
-                    duration = get_number(
-                        activity,
-                        "duration",
+                    score = get_number(overall, "value")
+
+                    if score is not None:
+                        metrics["sleep_score"] = round(score)
+
+                    seconds = get_number(
+                        row,
+                        "sleepTimeSeconds",
+                        "durationInSeconds",
+                    )
+
+                    if seconds and seconds > 0:
+                        metrics["sleep_hours"] = round(
+                            seconds / 3600,
+                            1,
+                        )
+
+                    if metrics["respiration_avg"] is None:
+                        metrics["respiration_avg"] = get_number(
+                            row,
+                            "averageRespirationValue",
+                            "avgRespirationValue",
+                        )
+
+            except GarminRateLimitError as error:
+                log_error(log, "Spánek – limit API", error)
+
+            except Exception as error:
+                log_error(log, "Spánek", error)
+
+        # -------------------------------------------------
+        # INTENZIVNÍ MINUTY
+        # -------------------------------------------------
+
+        if time.time() >= garmin_blocked_until:
+            try:
+                start_90 = today - datetime.timedelta(days=89)
+                start_7 = today - datetime.timedelta(days=6)
+                start_30 = today - datetime.timedelta(days=29)
+
+                start_week = today - datetime.timedelta(
+                    days=today.weekday()
+                )
+
+                result = api_get(
+                    f"{GARMIN_BASE}/usersummary-service/v2/dailysummaries",
+                    headers,
+                    params={
+                        "startDate": start_90.isoformat(),
+                        "endDate": today_s,
+                    },
+                )
+
+                totals = {
+                    "week": 0,
+                    "7d": 0,
+                    "month": 0,
+                    "90d": 0,
+                }
+
+                for row in extract_rows(result):
+
+                    if not isinstance(row, dict):
+                        continue
+
+                    date_s = str(
+                        row.get("calendarDate")
+                        or row.get("date")
+                        or ""
+                    )[:10]
+
+                    try:
+                        day = datetime.date.fromisoformat(date_s)
+
+                    except ValueError:
+                        continue
+
+                    intensity = (
+                        row.get("intensityMinutes")
+                        or row.get("intensityMinuteSummary")
+                        or {}
+                    )
+
+                    moderate = get_number(
+                        intensity,
+                        "moderate",
+                        "moderateMinutes",
                     ) or 0
 
-                    distance = get_number(
-                        activity,
-                        "distance",
+                    vigorous = get_number(
+                        intensity,
+                        "vigorous",
+                        "vigorousMinutes",
                     ) or 0
 
-                    metrics["activities_list"].append({
-                        "name": str(
-                            activity.get("activityName")
-                            or kind.get("typeKey")
-                            or "Aktivita"
-                        )[:100],
+                    total = moderate + vigorous * 2
 
-                        "date": str(
-                            activity.get("startTimeLocal") or ""
-                        )[:16],
+                    if day >= start_90:
+                        totals["90d"] += total
 
-                        "duration": round(duration / 60, 1),
-                        "distance": round(distance / 1000, 2),
+                    if day >= start_30:
+                        totals["month"] += total
 
-                        "calories": get_number(
+                    if day >= start_7:
+                        totals["7d"] += total
+
+                    if day >= start_week:
+                        totals["week"] += total
+
+                metrics["intensity_curr_week"] = round(
+                    totals["week"]
+                )
+
+                metrics["intensity_week"] = round(
+                    totals["7d"]
+                )
+
+                metrics["intensity_month"] = round(
+                    totals["month"]
+                )
+
+                metrics["intensity_90d"] = round(
+                    totals["90d"]
+                )
+
+            except GarminRateLimitError as error:
+                log_error(
+                    log,
+                    "Intenzivní minuty – limit API",
+                    error,
+                )
+
+            except Exception as error:
+                log_error(log, "Intenzivní minuty", error)
+
+        # -------------------------------------------------
+        # FITNESS VĚK
+        # -------------------------------------------------
+
+        if time.time() >= garmin_blocked_until:
+            try:
+                result = api_get(
+                    f"{GARMIN_BASE}/fitnessage-service/fitnessage/v2/"
+                    f"{today_s}",
+                    headers,
+                )
+
+                metrics["fitness_age"] = get_number(
+                    result,
+                    "fitnessAge",
+                )
+
+                metrics["achievable_fitness_age"] = get_number(
+                    result,
+                    "achievableFitnessAge",
+                )
+
+            except GarminRateLimitError as error:
+                log_error(log, "Fitness věk – limit API", error)
+
+            except Exception as error:
+                log_error(log, "Fitness věk", error)
+
+        # -------------------------------------------------
+        # AKTIVITY
+        # -------------------------------------------------
+
+        if time.time() >= garmin_blocked_until:
+            try:
+                result = api_get(
+                    f"{GARMIN_BASE}/activitylist-service/"
+                    "activities/search/activities",
+                    headers,
+                    params={
+                        "start": 0,
+                        "limit": 30,
+                    },
+                )
+
+                if isinstance(result, list):
+
+                    for activity in result:
+
+                        if not isinstance(activity, dict):
+                            continue
+
+                        kind = activity.get("activityType") or {}
+
+                        duration = get_number(
                             activity,
-                            "calories",
-                        ),
+                            "duration",
+                        ) or 0
 
-                        "avg_hr": get_number(
+                        distance = get_number(
                             activity,
-                            "averageHR",
-                            "avgHR",
-                        ),
-                    })
+                            "distance",
+                        ) or 0
 
-        except Exception as error:
-            log_error(log, "Aktivity", error)
+                        metrics["activities_list"].append({
+                            "name": str(
+                                activity.get("activityName")
+                                or kind.get("typeKey")
+                                or "Aktivita"
+                            )[:100],
+
+                            "date": str(
+                                activity.get("startTimeLocal") or ""
+                            )[:16],
+
+                            "duration": round(duration / 60, 1),
+                            "distance": round(distance / 1000, 2),
+
+                            "calories": get_number(
+                                activity,
+                                "calories",
+                            ),
+
+                            "avg_hr": get_number(
+                                activity,
+                                "averageHR",
+                                "avgHR",
+                            ),
+                        })
+
+            except GarminRateLimitError as error:
+                log_error(log, "Aktivity – limit API", error)
+
+            except Exception as error:
+                log_error(log, "Aktivity", error)
+
+        if time.time() < garmin_blocked_until:
+            remaining = int(garmin_blocked_until - time.time())
+
+            log.append(
+                f"Garmin API dočasně omezeno. "
+                f"Další synchronizace nejdříve za {remaining} s."
+            )
 
         log.append("Načítání Garmin dat dokončeno.")
 
@@ -835,7 +1176,18 @@ def fetch_garmin_data_safe(force_refresh=False):
 
     except Exception as error:
         log_error(log, "Hlavní Garmin připojení", error)
+
+        if live_cache["data"] is not None:
+            old_metrics, old_log = live_cache["data"]
+
+            return old_metrics, log + [
+                "Zobrazuji poslední uložená data."
+            ] + old_log
+
         return metrics, log
+
+    finally:
+        sync_lock.release()
 
 
 # ---------------------------------------------------------
@@ -1129,8 +1481,6 @@ def home(refresh: bool = False):
     )
 
     def card(label, value, suffix="", note=""):
-        # Textové hodnoty (např. rozsah Body Battery) se
-        # zobrazí přímo, číselné hodnoty se standardně formátují.
         if isinstance(value, str):
             display_value = value
         else:
@@ -1426,6 +1776,7 @@ details[open] summary {{
 
 @media (max-width: 380px) {{
     .metric-value {{ font-size: 21px; }}
+
     .container {{
         padding-left: 11px;
         padding-right: 11px;
@@ -1782,6 +2133,8 @@ def update_stats(
 
 @app.get("/health")
 def health():
+    now = time.time()
+
     return {
         "status": "ok",
 
@@ -1790,14 +2143,30 @@ def health():
         ),
 
         "live_cache_age_seconds": (
-            round(time.time() - live_cache["timestamp"])
+            round(now - live_cache["timestamp"])
             if live_cache["timestamp"]
             else None
         ),
 
         "history_cache_age_seconds": (
-            round(time.time() - history_cache["timestamp"])
+            round(now - history_cache["timestamp"])
             if history_cache["timestamp"]
             else None
+        ),
+
+        "garmin_rate_limited": (
+            now < garmin_blocked_until
+        ),
+
+        "garmin_retry_in_seconds": (
+            max(0, round(garmin_blocked_until - now))
+            if now < garmin_blocked_until
+            else 0
+        ),
+
+        "history_days_cached": (
+            len(history_cache["data"])
+            if history_cache["data"]
+            else 0
         ),
     }
