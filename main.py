@@ -51,6 +51,23 @@ STRESS_DATE_KEYS = (
     "startDate",
 )
 
+# Klíče používané při parsování historických kroků.
+STEPS_VALUE_KEYS = (
+    "totalSteps",
+    "steps",
+    "stepCount",
+    "totalStepCount",
+)
+
+# Klíče používané při parsování historického klidového tepu.
+RHR_VALUE_KEYS = (
+    "restingHeartRate",
+    "restingHr",
+    "restingHeartRateValue",
+    "restingHR",
+    "rhr",
+)
+
 _request_lock = threading.Lock()
 _last_request_at = 0.0
 _refresh_lock = threading.Lock()
@@ -496,16 +513,7 @@ def fetch_stress_history(
     """
     Načte denní stres přes Garmin stats endpoint.
 
-    Endpoint:
-    /usersummary-service/stats/stress/daily/{start}/{end}
-
-    Rozsah jednoho požadavku je omezen na maximálně
-    28 kalendářních dnů včetně obou krajních dnů.
-
-    Výsledkem je slovník:
-    {
-        "YYYY-MM-DD": stress_value
-    }
+    Tuto funkci ponechávám beze změny.
     """
 
     stress_by_date = {}
@@ -598,7 +606,6 @@ def fetch_stress_history(
                 error,
             )
 
-        # Další blok začíná následující den.
         current_start = (
             current_end + datetime.timedelta(days=1)
         )
@@ -618,6 +625,273 @@ def fetch_stress_history(
         )
 
     return stress_by_date
+
+
+# ---------------------------------------------------------
+# HISTORICKÉ KROKY A KLIDOVÝ TEP
+# ---------------------------------------------------------
+
+def extract_metric_records(
+    data,
+    value_keys,
+    records=None,
+    depth=0,
+):
+    """
+    Rekurzivně získá denní hodnoty metrik.
+
+    Hledá datum a číselnou hodnotu ve stejném záznamu.
+    Podporuje také vnořené objekty Garmin odpovědí.
+    """
+
+    if records is None:
+        records = []
+
+    if depth > 8:
+        return records
+
+    if isinstance(data, list):
+
+        for item in data:
+            extract_metric_records(
+                item,
+                value_keys,
+                records,
+                depth + 1,
+            )
+
+        return records
+
+    if not isinstance(data, dict):
+        return records
+
+    date_value = None
+
+    for key in (
+        "calendarDate",
+        "date",
+        "startDate",
+        "summaryDate",
+    ):
+
+        if data.get(key) is not None:
+
+            date_value = parse_garmin_date(
+                data.get(key)
+            )
+
+            if date_value:
+                break
+
+    value = get_number(
+        data,
+        *value_keys,
+    )
+
+    if value is None:
+        value = find_nested_number(
+            data,
+            value_keys,
+        )
+
+    if date_value and value is not None:
+
+        records.append({
+            "date": date_value,
+            "value": value,
+        })
+
+    for child in data.values():
+
+        if isinstance(child, (dict, list)):
+
+            extract_metric_records(
+                child,
+                value_keys,
+                records,
+                depth + 1,
+            )
+
+    return records
+
+
+def fetch_daily_metric_history(
+    headers,
+    metric_name,
+    endpoint_name,
+    value_keys,
+    start_date,
+    end_date,
+    log,
+):
+    """
+    Načte historii metriky z Garmin stats endpointu.
+
+    Endpoint má podobu:
+    /usersummary-service/stats/{endpoint}/daily/{start}/{end}
+    """
+
+    result_by_date = {}
+
+    start_s = start_date.isoformat()
+    end_s = end_date.isoformat()
+
+    url = (
+        f"{GARMIN_BASE}/usersummary-service/stats/"
+        f"{endpoint_name}/daily/{start_s}/{end_s}"
+    )
+
+    try:
+
+        result = api_get(
+            url,
+            headers,
+        )
+
+        records = extract_metric_records(
+            result,
+            value_keys,
+        )
+
+        for record in records:
+
+            date_s = record["date"]
+            value = record["value"]
+
+            if not start_s <= date_s <= end_s:
+                continue
+
+            if value < 0:
+                continue
+
+            if metric_name == "hr" and value > 250:
+                continue
+
+            result_by_date[date_s] = round(value, 1)
+
+        log.append(
+            f"Historie {metric_name}: "
+            f"{len(result_by_date)} denních hodnot "
+            f"z endpointu {endpoint_name}."
+        )
+
+        if not result_by_date:
+
+            logger.info(
+                "Garmin %s endpoint nevrátil rozpoznané hodnoty. "
+                "Odpověď: %s",
+                metric_name,
+                str(result)[:700],
+            )
+
+    except Exception as error:
+
+        log_error(
+            log,
+            f"Historie {metric_name} ({endpoint_name})",
+            error,
+        )
+
+    return result_by_date
+
+
+def fetch_historical_resting_heart_rate(
+    headers,
+    start_date,
+    end_date,
+    log,
+):
+    """
+    Nejprve zkusí hromadný Garmin RHR stats endpoint.
+    Chybějící dny následně doplní denním heart-rate endpointem.
+    """
+
+    result = fetch_daily_metric_history(
+        headers=headers,
+        metric_name="hr",
+        endpoint_name="rhr",
+        value_keys=RHR_VALUE_KEYS,
+        start_date=start_date,
+        end_date=end_date,
+        log=log,
+    )
+
+    # Pokud hromadný endpoint nevrátil žádné hodnoty,
+    # zkusíme denní endpoint pro jednotlivé dny.
+    missing_dates = [
+        day
+        for day in date_range(
+            (end_date - start_date).days + 1,
+            end_date,
+        )
+        if day not in result
+    ]
+
+    if missing_dates:
+
+        logger.info(
+            "Historický RHR: doplňuji %s chybějících dnů.",
+            len(missing_dates),
+        )
+
+        for day in missing_dates:
+
+            try:
+
+                data = api_get(
+                    f"{GARMIN_BASE}/wellness-service/"
+                    "wellness/dailyHeartRate",
+                    headers,
+                    params={"date": day},
+                )
+
+                value = find_nested_number(
+                    data,
+                    RHR_VALUE_KEYS,
+                )
+
+                if (
+                    value is not None
+                    and 0 < value <= 250
+                ):
+                    result[day] = round(value, 1)
+
+            except requests.HTTPError as error:
+
+                if getattr(
+                    error.response,
+                    "status_code",
+                    None,
+                ) == 429:
+
+                    log_error(
+                        log,
+                        "Historický klidový tep – dosažen limit API",
+                        error,
+                    )
+
+                    break
+
+                logger.warning(
+                    "Klidový tep %s: %s",
+                    day,
+                    error,
+                )
+
+            except Exception as error:
+
+                logger.warning(
+                    "Klidový tep %s: %s",
+                    day,
+                    error,
+                )
+
+    log.append(
+        f"Historický klidový tep celkem: "
+        f"{len(result)} denních hodnot."
+    )
+
+    return result
 
 
 # ---------------------------------------------------------
@@ -711,10 +985,7 @@ def fetch_today_heart_rate_and_stress(
     """
     Doplní pouze chybějící klidový tep.
 
-    Stres se načítá přes samostatnou historii:
-    /usersummary-service/stats/stress/daily/
-
-    Nepoužívá se nefunkční dailyStress endpoint.
+    Stres se načítá přes samostatnou historii.
     """
 
     if metrics.get("resting_heart_rate") is None:
@@ -729,11 +1000,7 @@ def fetch_today_heart_rate_and_stress(
 
             value = find_nested_number(
                 result,
-                (
-                    "restingHeartRate",
-                    "restingHr",
-                    "restingHeartRateValue",
-                ),
+                RHR_VALUE_KEYS,
             )
 
             if value is not None:
@@ -830,6 +1097,29 @@ def fetch_history(headers, today, log):
     )
 
     # -----------------------------------------------------
+    # HISTORICKÉ KROKY A KLIDOVÝ TEP
+    # -----------------------------------------------------
+
+    history_start = today - datetime.timedelta(days=29)
+
+    steps_by_date = fetch_daily_metric_history(
+        headers=headers,
+        metric_name="steps",
+        endpoint_name="steps",
+        value_keys=STEPS_VALUE_KEYS,
+        start_date=history_start,
+        end_date=today,
+        log=log,
+    )
+
+    hr_by_date = fetch_historical_resting_heart_rate(
+        headers,
+        history_start,
+        today,
+        log,
+    )
+
+    # -----------------------------------------------------
     # VYTVOŘENÍ 30DENNÍ HISTORIE
     # -----------------------------------------------------
 
@@ -844,10 +1134,18 @@ def fetch_history(headers, today, log):
         if source:
             row.update(map_daily_summary(source))
 
+        # Historické kroky z dedikovaného endpointu.
+        # Pokud nejsou dostupné, zůstane hodnota ze souhrnu.
+        if day in steps_by_date:
+            row["steps"] = steps_by_date[day]
+
+        # Historický klidový tep z dedikovaného endpointu.
+        if day in hr_by_date:
+            row["hr"] = hr_by_date[day]
+
         # Stres z dedikovaného endpointu má přednost.
         # Denní souhrn zůstává záložním zdrojem.
         if day in stress_by_date:
-
             row["stress"] = stress_by_date[day]
 
         rows.append(row)
@@ -1119,6 +1417,7 @@ def _fetch_garmin_data(force_refresh=False):
 
         metrics["history"] = history
 
+        # Průměr pouze z dostupných hodnot klidového tepu.
         metrics["monthly_avg_hr"] = average(
             [r.get("hr") for r in history]
         )
@@ -1127,9 +1426,11 @@ def _fetch_garmin_data(force_refresh=False):
             [r.get("hrv") for r in history]
         )
 
+        # Součet pouze ze skutečně dostupných denních hodnot kroků.
         metrics["steps_month"] = sum(
-            r.get("steps", 0) or 0
+            r["steps"]
             for r in history
+            if r.get("steps") is not None
         )
 
         today_row = next(
@@ -1175,12 +1476,7 @@ def _fetch_garmin_data(force_refresh=False):
 
                 value = find_nested_number(
                     result,
-                    (
-                        "totalSteps",
-                        "steps",
-                        "value",
-                        "stepCount",
-                    ),
+                    STEPS_VALUE_KEYS + ("value",),
                 )
 
                 if value is not None:
