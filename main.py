@@ -28,6 +28,7 @@ REQUEST_TIMEOUT = 20
 MIN_REQUEST_INTERVAL = 1.5
 MAX_RETRIES_429 = 3
 HRV_HISTORY_DAYS = 14
+RESTING_HR_HISTORY_DAYS = 30
 
 STRESS_HISTORY_DAYS = 90
 STRESS_MAX_CHUNK_DAYS = 28
@@ -123,7 +124,6 @@ def get_number(data, *keys):
 def find_nested_number(data, keys, depth=0):
     """
     Hledá hodnotu i v zanořených objektech a seznamech.
-    Garmin endpointy mohou vracet různé struktury odpovědí.
     """
 
     if depth > 6:
@@ -419,16 +419,6 @@ def find_latest_body_battery(result):
 def extract_stress_records(data, records=None, depth=0):
     """
     Rekurzivně hledá denní záznamy stresu.
-
-    Garmin může vracet například:
-    {
-        "calendarDate": "2026-01-01",
-        "values": {
-            "overallStressLevel": 35
-        }
-    }
-
-    Funkce podporuje také seznamy a další zanořené struktury.
     """
 
     if records is None:
@@ -495,12 +485,6 @@ def fetch_stress_history(
 ):
     """
     Načte denní stres přes Garmin stats endpoint.
-
-    Endpoint:
-    /usersummary-service/stats/stress/daily/{start}/{end}
-
-    Rozsah jednoho požadavku je omezen na maximálně
-    28 kalendářních dnů včetně obou krajních dnů.
     """
 
     stress_by_date = {}
@@ -525,9 +509,7 @@ def fetch_stress_history(
         start_s = current_start.isoformat()
         end_s = current_end.isoformat()
 
-        url = (
-            f"{endpoint}/{start_s}/{end_s}"
-        )
+        url = f"{endpoint}/{start_s}/{end_s}"
 
         try:
 
@@ -621,9 +603,6 @@ def fetch_stress_history(
 def extract_steps_records(data, records=None, depth=0):
     """
     Rekurzivně hledá denní záznamy kroků.
-
-    Podporuje seznamy, vnořené objekty a běžné názvy
-    Garmin polí. Každý záznam musí obsahovat datum.
     """
 
     if records is None:
@@ -699,11 +678,6 @@ def fetch_steps_history(
 ):
     """
     Načte historické denní kroky ze samostatného Garmin endpointu.
-
-    Endpoint:
-    /usersummary-service/stats/steps/daily/{start}/{end}
-
-    Data se ukládají podle konkrétního data.
     """
 
     steps_by_date = {}
@@ -741,9 +715,7 @@ def fetch_steps_history(
 
                 date_s = record["date"]
 
-                if (
-                    start_s <= date_s <= end_s
-                ):
+                if start_s <= date_s <= end_s:
                     steps_by_date[date_s] = record["steps"]
                     found += 1
 
@@ -787,6 +759,122 @@ def fetch_steps_history(
     )
 
     return steps_by_date
+
+
+# ---------------------------------------------------------
+# KLIDOVÝ TEP – SAMOSTATNÉ NAČÍTÁNÍ HISTORIE
+# ---------------------------------------------------------
+
+def extract_resting_hr_value(result):
+    """
+    Vytáhne výhradně klidový tep z odpovědi Garminu.
+    Nepoužívá běžný ani maximální tep jako náhradní hodnotu.
+    """
+
+    value = find_nested_number(
+        result,
+        (
+            "lastNightAvgRestingHeartRate",
+            "restingHeartRate",
+            "restingHeartRateValue",
+            "restingHr",
+            "restingHR",
+        ),
+    )
+
+    if value is None:
+        return None
+
+    # Ochrana před nesmyslnými nebo chybnými hodnotami.
+    if not 25 <= value <= 150:
+        return None
+
+    return round(value)
+
+
+def fetch_resting_hr_history(
+    headers,
+    start_date,
+    end_date,
+    log,
+):
+    """
+    Načte klidový tep samostatně pro každý den.
+
+    Endpoint:
+    /wellness-service/wellness/dailyHeartRate?date=YYYY-MM-DD
+
+    Výsledky ukládá podle data. Pokud Garmin pro některý
+    den hodnotu neposkytne, den zůstane bez hodnoty.
+    """
+
+    hr_by_date = {}
+
+    current_date = start_date
+    successful_days = 0
+    failed_days = 0
+
+    endpoint = (
+        f"{GARMIN_BASE}/wellness-service/wellness/dailyHeartRate"
+    )
+
+    while current_date <= end_date:
+
+        day_s = current_date.isoformat()
+
+        try:
+
+            result = api_get(
+                endpoint,
+                headers,
+                params={
+                    "date": day_s,
+                },
+            )
+
+            value = extract_resting_hr_value(result)
+
+            successful_days += 1
+
+            if value is not None:
+
+                hr_by_date[day_s] = value
+
+                logger.info(
+                    "Garmin klidový tep %s: %s bpm.",
+                    day_s,
+                    value,
+                )
+
+            else:
+
+                logger.info(
+                    "Garmin klidový tep %s: hodnota nenalezena. "
+                    "Odpověď: %s",
+                    day_s,
+                    str(result)[:350],
+                )
+
+        except Exception as error:
+
+            failed_days += 1
+
+            log_error(
+                log,
+                f"Klidový tep {day_s}",
+                error,
+            )
+
+        current_date += datetime.timedelta(days=1)
+
+    log.append(
+        "Historie klidového tepu: "
+        f"{len(hr_by_date)} denních hodnot, "
+        f"{successful_days} úspěšných požadavků, "
+        f"{failed_days} chybných požadavků."
+    )
+
+    return hr_by_date
 
 
 # ---------------------------------------------------------
@@ -868,7 +956,7 @@ def get_daily_intensity(row):
 
 
 # ---------------------------------------------------------
-# SAMOSTATNÉ NAČÍTÁNÍ KLIDOVÉHO TEPU
+# SAMOSTATNÉ NAČÍTÁNÍ DNEŠNÍHO KLIDOVÉHO TEPU
 # ---------------------------------------------------------
 
 def fetch_today_heart_rate_and_stress(
@@ -878,12 +966,8 @@ def fetch_today_heart_rate_and_stress(
     log,
 ):
     """
-    Doplní pouze chybějící klidový tep.
-
-    Stres se načítá přes samostatnou historii:
-    /usersummary-service/stats/stress/daily/
-
-    Nepoužívá se nefunkční dailyStress endpoint.
+    Záložní doplnění dnešního klidového tepu.
+    Stres se načítá samostatnou historickou funkcí.
     """
 
     if metrics.get("resting_heart_rate") is None:
@@ -896,22 +980,15 @@ def fetch_today_heart_rate_and_stress(
                 params={"date": today_s},
             )
 
-            value = find_nested_number(
-                result,
-                (
-                    "restingHeartRate",
-                    "restingHr",
-                    "restingHeartRateValue",
-                ),
-            )
+            value = extract_resting_hr_value(result)
 
             if value is not None:
 
-                metrics["resting_heart_rate"] = round(value)
+                metrics["resting_heart_rate"] = value
 
                 log.append(
                     "Klidový tep doplněn ze samostatného Garmin endpointu: "
-                    f"{round(value)} bpm."
+                    f"{value} bpm."
                 )
 
             else:
@@ -1012,6 +1089,21 @@ def fetch_history(headers, today, log):
     )
 
     # -----------------------------------------------------
+    # KLIDOVÝ TEP – SAMOSTATNÝ GARMIN ENDPOINT
+    # -----------------------------------------------------
+
+    hr_start = today - datetime.timedelta(
+        days=RESTING_HR_HISTORY_DAYS - 1
+    )
+
+    resting_hr_by_date = fetch_resting_hr_history(
+        headers,
+        hr_start,
+        today,
+        log,
+    )
+
+    # -----------------------------------------------------
     # VYTVOŘENÍ 30DENNÍ HISTORIE
     # -----------------------------------------------------
 
@@ -1027,20 +1119,25 @@ def fetch_history(headers, today, log):
             row.update(map_daily_summary(source))
 
         # Stres z dedikovaného endpointu má přednost.
-        # Denní souhrn zůstává záložním zdrojem.
+        # Původní způsob načítání stresu zůstává zachován.
         if day in stress_by_date:
-
             row["stress"] = stress_by_date[day]
 
-        # Samostatná historie kroků má přednost
-        # před hodnotou z denního souhrnu.
+        # Samostatná historie kroků má přednost.
         if day in steps_by_date:
-
             row["steps"] = steps_by_date[day]
+
+        # Samostatná historie klidového tepu má přednost
+        # před hodnotou z denního souhrnu.
+        if day in resting_hr_by_date:
+            row["hr"] = resting_hr_by_date[day]
 
         rows.append(row)
 
-    # HRV pouze za posledních 14 dní.
+    # -----------------------------------------------------
+    # HRV – POSLEDNÍCH 14 DNÍ
+    # -----------------------------------------------------
+
     hrv_start = today - datetime.timedelta(
         days=HRV_HISTORY_DAYS - 1
     )
@@ -1342,7 +1439,7 @@ def _fetch_garmin_data(force_refresh=False):
             "total_calories"
         )
 
-        # Samostatné načtení pouze chybějícího klidového tepu.
+        # Záložní načtení pouze chybějícího dnešního tepu.
         fetch_today_heart_rate_and_stress(
             headers,
             today_s,
@@ -2573,6 +2670,8 @@ def health():
         ),
 
         "hrv_history_days": HRV_HISTORY_DAYS,
+
+        "resting_hr_history_days": RESTING_HR_HISTORY_DAYS,
 
         "stress_history_days": STRESS_HISTORY_DAYS,
 
