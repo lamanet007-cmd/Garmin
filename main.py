@@ -29,6 +29,28 @@ MIN_REQUEST_INTERVAL = 1.5
 MAX_RETRIES_429 = 3
 HRV_HISTORY_DAYS = 14
 
+STRESS_HISTORY_DAYS = 90
+STRESS_MAX_CHUNK_DAYS = 28
+
+STRESS_VALUE_KEYS = (
+    "overallStressLevel",
+    "averageStressLevel",
+    "avgStressLevel",
+    "averageStress",
+    "stressAvg",
+    "avgStress",
+    "stressScore",
+    "averageStressScore",
+    "stressLevel",
+    "stress",
+)
+
+STRESS_DATE_KEYS = (
+    "calendarDate",
+    "date",
+    "startDate",
+)
+
 _request_lock = threading.Lock()
 _last_request_at = 0.0
 _refresh_lock = threading.Lock()
@@ -192,6 +214,28 @@ def log_error(log, label, error):
 
     log.append(message)
     logger.warning(message)
+
+
+def parse_garmin_date(value):
+    """
+    Převede Garmin datum na YYYY-MM-DD.
+    Podporuje datum i ISO timestamp.
+    """
+
+    if value is None:
+        return None
+
+    date_s = str(value).strip()
+
+    if not date_s:
+        return None
+
+    date_s = date_s[:10]
+
+    try:
+        return datetime.date.fromisoformat(date_s).isoformat()
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------
@@ -369,6 +413,214 @@ def find_latest_body_battery(result):
 
 
 # ---------------------------------------------------------
+# STRES – PARSOVÁNÍ A NAČÍTÁNÍ HISTORIE
+# ---------------------------------------------------------
+
+def extract_stress_records(data, records=None, depth=0):
+    """
+    Rekurzivně hledá denní záznamy stresu.
+
+    Garmin může vracet například:
+    {
+        "calendarDate": "2026-01-01",
+        "values": {
+            "overallStressLevel": 35
+        }
+    }
+
+    Funkce podporuje také seznamy a další zanořené struktury.
+    """
+
+    if records is None:
+        records = []
+
+    if depth > 8:
+        return records
+
+    if isinstance(data, list):
+
+        for item in data:
+            extract_stress_records(
+                item,
+                records,
+                depth + 1,
+            )
+
+        return records
+
+    if not isinstance(data, dict):
+        return records
+
+    date_value = None
+
+    for key in STRESS_DATE_KEYS:
+
+        if data.get(key) is not None:
+            date_value = parse_garmin_date(data.get(key))
+
+            if date_value:
+                break
+
+    stress_value = find_nested_number(
+        data,
+        STRESS_VALUE_KEYS,
+    )
+
+    if date_value and stress_value is not None:
+
+        if 0 <= stress_value <= 100:
+
+            records.append({
+                "date": date_value,
+                "stress": round(stress_value, 1),
+            })
+
+    for child in data.values():
+
+        if isinstance(child, (dict, list)):
+            extract_stress_records(
+                child,
+                records,
+                depth + 1,
+            )
+
+    return records
+
+
+def fetch_stress_history(
+    headers,
+    start_date,
+    end_date,
+    log,
+):
+    """
+    Načte denní stres přes Garmin stats endpoint.
+
+    Endpoint:
+    /usersummary-service/stats/stress/daily/{start}/{end}
+
+    Rozsah jednoho požadavku je omezen na maximálně
+    28 kalendářních dnů včetně obou krajních dnů.
+
+    Výsledkem je slovník:
+    {
+        "YYYY-MM-DD": stress_value
+    }
+    """
+
+    stress_by_date = {}
+
+    current_start = start_date
+    successful_chunks = 0
+    failed_chunks = 0
+
+    endpoint = (
+        f"{GARMIN_BASE}/usersummary-service/stats/stress/daily"
+    )
+
+    while current_start <= end_date:
+
+        current_end = min(
+            current_start + datetime.timedelta(
+                days=STRESS_MAX_CHUNK_DAYS - 1
+            ),
+            end_date,
+        )
+
+        start_s = current_start.isoformat()
+        end_s = current_end.isoformat()
+
+        url = (
+            f"{endpoint}/{start_s}/{end_s}"
+        )
+
+        try:
+
+            result = api_get(
+                url,
+                headers,
+            )
+
+            records = extract_stress_records(result)
+
+            for record in records:
+
+                date_s = record["date"]
+                value = record["stress"]
+
+                if (
+                    current_start.isoformat()
+                    <= date_s
+                    <= current_end.isoformat()
+                ):
+                    stress_by_date[date_s] = value
+
+            successful_chunks += 1
+
+            logger.info(
+                "Garmin stres %s až %s: nalezeno %s záznamů.",
+                start_s,
+                end_s,
+                len(records),
+            )
+
+            if not records:
+
+                if isinstance(result, dict):
+                    response_keys = list(result.keys())[:20]
+                elif isinstance(result, list):
+                    response_keys = [
+                        "response_list_length",
+                        len(result),
+                    ]
+                else:
+                    response_keys = [
+                        type(result).__name__
+                    ]
+
+                logger.info(
+                    "Garmin stres endpoint bez hodnot. "
+                    "Typ odpovědi: %s, klíče: %s",
+                    type(result).__name__,
+                    response_keys,
+                )
+
+        except Exception as error:
+
+            failed_chunks += 1
+
+            log_error(
+                log,
+                (
+                    "Historie stresu "
+                    f"{start_s} až {end_s}"
+                ),
+                error,
+            )
+
+        # Další blok začíná následující den.
+        current_start = (
+            current_end + datetime.timedelta(days=1)
+        )
+
+    log.append(
+        "Historie stresu: "
+        f"{len(stress_by_date)} denních hodnot, "
+        f"{successful_chunks} úspěšných bloků, "
+        f"{failed_chunks} chybných bloků."
+    )
+
+    if not stress_by_date and successful_chunks:
+
+        log.append(
+            "Stres endpoint odpověděl, ale nepodařilo se "
+            "v odpovědi najít žádné denní hodnoty stresu."
+        )
+
+    return stress_by_date
+
+
+# ---------------------------------------------------------
 # DENNÍ SOUHRNY
 # ---------------------------------------------------------
 
@@ -385,12 +637,7 @@ def map_daily_summary(row):
             "hr",
         ),
         (
-            (
-                "averageStressLevel",
-                "avgStressLevel",
-                "averageStress",
-                "stressScore",
-            ),
+            STRESS_VALUE_KEYS,
             "stress",
         ),
         (
@@ -413,10 +660,18 @@ def map_daily_summary(row):
 
     for keys, target in fields:
 
-        value = get_number(row, *keys)
+        value = find_nested_number(
+            row,
+            keys,
+        )
 
         if value is not None:
-            result[target] = round(value, 1)
+
+            if target == "stress":
+                if 0 <= value <= 100:
+                    result[target] = round(value, 1)
+            else:
+                result[target] = round(value, 1)
 
     return result
 
@@ -456,16 +711,16 @@ def fetch_today_heart_rate_and_stress(
     """
     Doplní pouze chybějící klidový tep.
 
-    Denní stres se načítá výhradně z denních souhrnů
-    přes map_daily_summary().
+    Stres se načítá přes samostatnou historii:
+    /usersummary-service/stats/stress/daily/
 
-    Samostatný endpoint dailyStress se nepoužívá,
-    protože může vracet HTTP 404.
+    Nepoužívá se nefunkční dailyStress endpoint.
     """
 
     if metrics.get("resting_heart_rate") is None:
 
         try:
+
             result = api_get(
                 f"{GARMIN_BASE}/wellness-service/wellness/dailyHeartRate",
                 headers,
@@ -482,6 +737,7 @@ def fetch_today_heart_rate_and_stress(
             )
 
             if value is not None:
+
                 metrics["resting_heart_rate"] = round(value)
 
                 log.append(
@@ -490,6 +746,7 @@ def fetch_today_heart_rate_and_stress(
                 )
 
             else:
+
                 log.append(
                     "Klidový tep: samostatný endpoint odpověděl, "
                     "ale hodnota nebyla nalezena."
@@ -501,6 +758,7 @@ def fetch_today_heart_rate_and_stress(
                 )
 
         except Exception as error:
+
             log_error(
                 log,
                 "Samostatné načtení klidového tepu",
@@ -546,18 +804,34 @@ def fetch_history(headers, today, log):
         if not isinstance(item, dict):
             continue
 
-        date_s = str(
+        date_s = parse_garmin_date(
             item.get("calendarDate")
             or item.get("date")
-            or ""
-        )[:10]
+        )
 
-        try:
-            datetime.date.fromisoformat(date_s)
-        except ValueError:
+        if not date_s:
             continue
 
         by_date[date_s] = item
+
+    # -----------------------------------------------------
+    # STRES – SAMOSTATNÝ GARMIN ENDPOINT
+    # -----------------------------------------------------
+
+    stress_start = today - datetime.timedelta(
+        days=STRESS_HISTORY_DAYS - 1
+    )
+
+    stress_by_date = fetch_stress_history(
+        headers,
+        stress_start,
+        today,
+        log,
+    )
+
+    # -----------------------------------------------------
+    # VYTVOŘENÍ 30DENNÍ HISTORIE
+    # -----------------------------------------------------
 
     rows = []
 
@@ -569,6 +843,12 @@ def fetch_history(headers, today, log):
 
         if source:
             row.update(map_daily_summary(source))
+
+        # Stres z dedikovaného endpointu má přednost.
+        # Denní souhrn zůstává záložním zdrojem.
+        if day in stress_by_date:
+
+            row["stress"] = stress_by_date[day]
 
         rows.append(row)
 
@@ -627,6 +907,7 @@ def fetch_history(headers, today, log):
                 )
 
             else:
+
                 logger.warning(
                     "HRV %s: %s",
                     row["date"],
@@ -874,7 +1155,6 @@ def _fetch_garmin_data(force_refresh=False):
         )
 
         # Samostatné načtení pouze chybějícího klidového tepu.
-        # Denní stres pochází z denních souhrnů.
         fetch_today_heart_rate_and_stress(
             headers,
             today_s,
@@ -2105,6 +2385,10 @@ def health():
         ),
 
         "hrv_history_days": HRV_HISTORY_DAYS,
+
+        "stress_history_days": STRESS_HISTORY_DAYS,
+
+        "stress_max_chunk_days": STRESS_MAX_CHUNK_DAYS,
 
         "api_request_interval": MIN_REQUEST_INTERVAL,
     }
