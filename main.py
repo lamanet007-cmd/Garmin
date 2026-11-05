@@ -1,4 +1,3 @@
-
 import os
 import html
 import time
@@ -445,7 +444,7 @@ def get_daily_intensity(row):
 
 
 # ---------------------------------------------------------
-# SAMOSTATNÉ NAČÍTÁNÍ TEPU A STRESU
+# SAMOSTATNÉ NAČÍTÁNÍ KLIDOVÉHO TEPU
 # ---------------------------------------------------------
 
 def fetch_today_heart_rate_and_stress(
@@ -455,11 +454,15 @@ def fetch_today_heart_rate_and_stress(
     log,
 ):
     """
-    Doplní chybějící klidový tep a denní stres.
-    Nejprve používá denní wellness endpointy.
+    Doplní pouze chybějící klidový tep.
+
+    Denní stres se načítá výhradně z denních souhrnů
+    přes map_daily_summary().
+
+    Samostatný endpoint dailyStress se nepoužívá,
+    protože může vracet HTTP 404.
     """
 
-    # KLIDOVÝ TEP
     if metrics.get("resting_heart_rate") is None:
 
         try:
@@ -501,52 +504,6 @@ def fetch_today_heart_rate_and_stress(
             log_error(
                 log,
                 "Samostatné načtení klidového tepu",
-                error,
-            )
-
-    # DENNÍ STRES
-    if metrics.get("stress_avg") is None:
-
-        try:
-            result = api_get(
-                f"{GARMIN_BASE}/wellness-service/wellness/dailyStress/{today_s}",
-                headers,
-            )
-
-            value = find_nested_number(
-                result,
-                (
-                    "avgStressLevel",
-                    "averageStressLevel",
-                    "averageStress",
-                    "stressAvg",
-                    "overallStressLevel",
-                ),
-            )
-
-            if value is not None:
-                metrics["stress_avg"] = round(value)
-
-                log.append(
-                    "Denní stres doplněn ze samostatného Garmin endpointu: "
-                    f"{round(value)}."
-                )
-
-            else:
-                log.append(
-                    "Stres: samostatný endpoint odpověděl, "
-                    "ale průměrná hodnota nebyla nalezena."
-                )
-
-                logger.info(
-                    "Garmin dailyStress odpověď: %s",
-                    str(result)[:500],
-                )
-
-        except Exception as error:
-            log_error(
-                log,
-                "Samostatné načtení denního stresu",
                 error,
             )
 
@@ -916,7 +873,8 @@ def _fetch_garmin_data(force_refresh=False):
             "total_calories"
         )
 
-        # Samostatné načtení chybějícího tepu a stresu.
+        # Samostatné načtení pouze chybějícího klidového tepu.
+        # Denní stres pochází z denních souhrnů.
         fetch_today_heart_rate_and_stress(
             headers,
             today_s,
